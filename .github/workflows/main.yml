@@ -227,15 +227,9 @@ jobs:
                 valid_chars = set(self.char2idx.keys())
                 filtered_text = ''.join([c for c in text if c in valid_chars])
                 
-                # 修复：如果 filtered_text 为空，使用默认文本
+                # 如果 filtered_text 为空，抛出异常
                 if not filtered_text:
-                    print("⚠️ filtered_text 为空，使用默认文本")
-                    filtered_text = "你好世界"
-                    # 重新构建词汇表
-                    chars = sorted(set(filtered_text))
-                    self.char2idx = {char: idx for idx, char in enumerate(chars)}
-                    self.idx2char = {idx: char for char, idx in self.char2idx.items()}
-                    self.vocab_size = len(chars)
+                    raise ValueError("filtered_text is empty, cannot prepare training data.")
                 
                 if len(filtered_text) < seq_length + 1:
                     repeat_times = (seq_length + 1) // len(filtered_text) + 1
@@ -303,6 +297,9 @@ jobs:
                     print("-"*70)
                 
                 try:
+                    # 先构建词汇表
+                    self._build_vocab()
+                    
                     X_train, y_train = self._prepare_data(self.seq_length)
                     
                     if self.model is None:
@@ -353,6 +350,10 @@ jobs:
                     
                     return history
                     
+                except ValueError as e:
+                    print(f"⚠️ 准备数据失败: {e}")
+                    print("📝 跳过训练，使用回退方案")
+                    return None
                 except Exception as e:
                     print(f"⚠️ 训练过程中出错: {e}")
                     import traceback
