@@ -303,11 +303,20 @@ jobs:
                         keras.callbacks.ReduceLROnPlateau(factor=0.5, patience=5)
                     ]
                     
+                    # 修复：安全计算 validation_split
+                    num_samples = len(X_train)
+                    if num_samples > 10:
+                        val_split = min(0.1, 1 - 1/num_samples)
+                    else:
+                        val_split = 0.0  # 样本太少，不使用验证集
+                    
+                    print(f"📊 训练样本数: {num_samples}, 验证集比例: {val_split:.2f}")
+                    
                     history = self.model.fit(
                         X_train, y_train,
                         epochs=epochs,
-                        batch_size=min(BATCH_SIZE, len(X_train)),
-                        validation_split=min(0.1, 1 - 1/len(X_train)) if len(X_train) > 10 else 0,
+                        batch_size=min(BATCH_SIZE, num_samples),
+                        validation_split=val_split,
                         verbose=1 if verbose else 0,
                         callbacks=callbacks
                     )
@@ -585,25 +594,20 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
     
-    # ============== 健壮的提交和推送步骤 ==============
     - name: Commit and push changes
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
         git remote set-url origin https://x-access-token:${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}
         
-        # 添加所有生成的文件
         git add words.json greetings_output.txt model.h5 2>/dev/null || true
         
-        # 如果有更改才提交
         if ! git diff --staged --quiet; then
           git commit -m "🧠 Neural network training with words.json [skip ci]"
           
-          # 尝试拉取远程更改并变基，然后推送
           echo "🔄 尝试拉取远程更改并变基..."
           git pull origin main --rebase || true
           
-          # 推送，如果失败则强制推送（使用 --force-with-lease 更安全）
           if ! git push origin main; then
             echo "⚠️ 推送失败，尝试强制推送..."
             git push origin main --force-with-lease
