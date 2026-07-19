@@ -41,7 +41,7 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.10'  # 使用TensorFlow兼容的版本
+        python-version: '3.10'
     
     - name: Cache pip packages
       uses: actions/cache@v3
@@ -102,10 +102,11 @@ jobs:
             "last_updated": datetime.now().isoformat(),
             "corpus": {
                 "greetings": [
-                    "你好！😊 很高兴见到你！有什么我可以帮你的吗？",
-                    "你好呀！又见面啦～ 😄",
-                    "嗨！我是DeepSeek，由深度求索公司创造的AI助手。😊",
-                    "欢迎来到我的网站！希望您在这里度过愉快的时光。"
+                    "你好！很高兴见到你！有什么我可以帮你的吗？",
+                    "你好呀！又见面啦！",
+                    "嗨！我是DeepSeek，由深度求索公司创造的AI助手。",
+                    "欢迎来到我的网站！希望您在这里度过愉快的时光。",
+                    "您好！请问今天有什么可以帮助您的呢？"
                 ],
                 "python_print": [
                     "我来为你生成Python打印代码：print('Hello, World!')",
@@ -180,31 +181,48 @@ jobs:
                     json.dump(self.words_data, f, ensure_ascii=False, indent=2)
             
             def _build_vocab(self):
-                """构建字符级词汇表"""
+                """构建字符级词汇表 - 修复中文和特殊字符问题"""
                 all_text = ''.join(self.corpus)
                 chars = sorted(set(all_text))
+                chars = [c for c in chars if c and ord(c) >= 32]
+                
                 self.char2idx = {char: idx for idx, char in enumerate(chars)}
                 self.idx2char = {idx: char for char, idx in self.char2idx.items()}
                 self.vocab_size = len(chars)
+                
                 print(f"🔤 词汇表大小: {self.vocab_size} 个字符")
+                print(f"📝 示例字符: {''.join(list(self.char2idx.keys())[:20])}")
                 return self
             
             def _prepare_data(self, seq_length=20):
-                """准备训练数据"""
+                """准备训练数据 - 增加错误处理"""
                 text = ''.join(self.corpus)
+                valid_chars = set(self.char2idx.keys())
+                filtered_text = ''.join([c for c in text if c in valid_chars])
+                
+                if len(filtered_text) < seq_length + 1:
+                    print(f"⚠️ 文本太短 ({len(filtered_text)} 字符)，需要至少 {seq_length + 1} 个字符")
+                    filtered_text = (filtered_text * (seq_length + 1))[:seq_length + 1]
+                
                 sequences = []
                 next_chars = []
                 
-                for i in range(0, len(text) - seq_length, 1):
-                    seq = text[i:i+seq_length]
-                    next_char = text[i+seq_length]
+                for i in range(0, len(filtered_text) - seq_length, 1):
+                    seq = filtered_text[i:i+seq_length]
+                    next_char = filtered_text[i+seq_length]
                     sequences.append([self.char2idx[char] for char in seq])
                     next_chars.append(self.char2idx[next_char])
+                
+                if len(sequences) == 0:
+                    print("⚠️ 没有生成训练样本，使用最小数据集")
+                    seq = filtered_text[:seq_length]
+                    next_char = filtered_text[seq_length] if len(filtered_text) > seq_length else seq[0]
+                    sequences = [[self.char2idx[c] for c in seq]]
+                    next_chars = [self.char2idx[next_char]]
                 
                 X = np.array(sequences)
                 y = np.array(next_chars)
                 
-                # One-hot编码
                 X_one_hot = tf.one_hot(X, depth=self.vocab_size)
                 y_one_hot = tf.one_hot(y, depth=self.vocab_size)
                 
@@ -240,7 +258,7 @@ jobs:
                 return model
             
             def train(self, epochs=100, verbose=True):
-                """训练神经网络"""
+                """训练神经网络 - 增加错误处理"""
                 if verbose:
                     print("\n" + "="*70)
                     print("🚀 开始训练神经网络")
@@ -250,87 +268,95 @@ jobs:
                     print(f"🔄 训练轮数: {epochs}")
                     print("-"*70)
                 
-                # 准备数据
-                X_train, y_train = self._prepare_data(self.seq_length)
-                
-                # 构建模型
-                if self.model is None:
-                    self.build_model()
-                
-                # 回调
-                callbacks = [
-                    keras.callbacks.EarlyStopping(patience=10, restore_best_weights=True),
-                    keras.callbacks.ReduceLROnPlateau(factor=0.5, patience=5)
-                ]
-                
-                # 训练
-                history = self.model.fit(
-                    X_train, y_train,
-                    epochs=epochs,
-                    batch_size=BATCH_SIZE,
-                    validation_split=0.1,
-                    verbose=1 if verbose else 0,
-                    callbacks=callbacks
-                )
-                
-                # 更新统计
-                final_acc = history.history['accuracy'][-1]
-                final_loss = history.history['loss'][-1]
-                
-                self.words_data['training_stats']['last_training'] = datetime.now().isoformat()
-                self.words_data['training_stats']['model_accuracy'] = float(final_acc)
-                self.words_data['training_stats']['model_loss'] = float(final_loss)
-                self.words_data['training_stats']['total_phrases'] = len(self.corpus)
-                self.words_data['training_stats']['categories'] = len(self.words_data.get('corpus', {}))
-                self._save_words()
-                
-                if verbose:
-                    print("-"*70)
-                    print("✅ 训练完成！")
-                    print(f"📊 最终准确率: {final_acc:.4f}")
-                    print(f"📊 最终损失: {final_loss:.4f}")
-                    print("="*70)
-                
-                return history
+                try:
+                    X_train, y_train = self._prepare_data(self.seq_length)
+                    
+                    if self.model is None:
+                        self.build_model()
+                    
+                    callbacks = [
+                        keras.callbacks.EarlyStopping(patience=10, restore_best_weights=True),
+                        keras.callbacks.ReduceLROnPlateau(factor=0.5, patience=5)
+                    ]
+                    
+                    history = self.model.fit(
+                        X_train, y_train,
+                        epochs=epochs,
+                        batch_size=min(BATCH_SIZE, len(X_train)),
+                        validation_split=min(0.1, 1 - 1/len(X_train)) if len(X_train) > 10 else 0,
+                        verbose=1 if verbose else 0,
+                        callbacks=callbacks
+                    )
+                    
+                    final_acc = history.history['accuracy'][-1]
+                    final_loss = history.history['loss'][-1]
+                    
+                    self.words_data['training_stats']['last_training'] = datetime.now().isoformat()
+                    self.words_data['training_stats']['model_accuracy'] = float(final_acc)
+                    self.words_data['training_stats']['model_loss'] = float(final_loss)
+                    self.words_data['training_stats']['total_phrases'] = len(self.corpus)
+                    self.words_data['training_stats']['categories'] = len(self.words_data.get('corpus', {}))
+                    self._save_words()
+                    
+                    if verbose:
+                        print("-"*70)
+                        print("✅ 训练完成！")
+                        print(f"📊 最终准确率: {final_acc:.4f}")
+                        print(f"📊 最终损失: {final_loss:.4f}")
+                        print("="*70)
+                    
+                    return history
+                    
+                except Exception as e:
+                    print(f"⚠️ 训练过程中出错: {e}")
+                    print("📝 使用回退方案（基于规则的生成）")
+                    return None
             
             def generate_text(self, seed_text=None, length=30, temperature=0.7):
-                """生成文本"""
-                if self.model is None:
+                """生成文本 - 增加错误处理"""
+                if self.model is None or self.vocab_size == 0:
                     return random.choice(self.corpus)
                 
-                if seed_text is None:
-                    seed_text = random.choice(self.corpus)[:self.seq_length]
-                
-                if len(seed_text) < self.seq_length:
-                    seed_text = seed_text.ljust(self.seq_length)
-                elif len(seed_text) > self.seq_length:
-                    seed_text = seed_text[:self.seq_length]
-                
-                generated = seed_text
-                
-                for _ in range(length):
-                    seq = [self.char2idx.get(char, 0) for char in generated[-self.seq_length:]]
-                    seq = tf.one_hot([seq], depth=self.vocab_size)
+                try:
+                    if seed_text is None:
+                        seed_text = random.choice(self.corpus)[:self.seq_length]
                     
-                    predictions = self.model.predict(seq, verbose=0)[0]
+                    if len(seed_text) < self.seq_length:
+                        padding_char = list(self.char2idx.keys())[0] if self.char2idx else " "
+                        seed_text = seed_text + padding_char * (self.seq_length - len(seed_text))
+                    elif len(seed_text) > self.seq_length:
+                        seed_text = seed_text[:self.seq_length]
                     
-                    # 温度采样
-                    predictions = np.log(predictions + 1e-7) / temperature
-                    exp_preds = np.exp(predictions)
-                    predictions = exp_preds / np.sum(exp_preds)
+                    valid_chars = set(self.char2idx.keys())
+                    seed_text = ''.join([c if c in valid_chars else list(valid_chars)[0] for c in seed_text])
                     
-                    next_idx = np.random.choice(range(self.vocab_size), p=predictions)
-                    next_char = self.idx2char[next_idx]
+                    generated = seed_text
                     
-                    generated += next_char
-                
-                return generated
+                    for _ in range(length):
+                        seq = [self.char2idx.get(char, 0) for char in generated[-self.seq_length:]]
+                        seq = tf.one_hot([seq], depth=self.vocab_size)
+                        
+                        predictions = self.model.predict(seq, verbose=0)[0]
+                        
+                        predictions = np.log(predictions + 1e-7) / temperature
+                        exp_preds = np.exp(predictions)
+                        predictions = exp_preds / np.sum(exp_preds)
+                        
+                        next_idx = np.random.choice(range(self.vocab_size), p=predictions)
+                        next_char = self.idx2char[next_idx]
+                        
+                        generated += next_char
+                    
+                    return generated
+                    
+                except Exception as e:
+                    print(f"⚠️ 生成文本时出错: {e}")
+                    return random.choice(self.corpus)
             
             def generate_response(self, user_input):
                 """生成回复"""
                 user_lower = user_input.lower()
                 
-                # 匹配意图
                 patterns = self.words_data.get('intent_patterns', {})
                 matched_category = None
                 
@@ -343,14 +369,12 @@ jobs:
                     phrases = self.words_data['corpus'][matched_category]
                     response = random.choice(phrases)
                 else:
-                    # 使用神经网络生成
                     try:
                         response = self.generate_text(
                             seed_text=user_input[:self.seq_length],
-                            length=30,
+                            length=20,
                             temperature=0.7
                         )
-                        # 清理生成文本
                         for punct in ['。', '！', '？', '.', '!', '?']:
                             if punct in response:
                                 response = response.split(punct)[0] + punct
@@ -358,7 +382,6 @@ jobs:
                     except:
                         response = random.choice(self.corpus)
                 
-                # 添加表情
                 emojis = [" 😊", " 😄", " 🌟", " ✨", " 🚀", " 💻", " 🎉", ""]
                 if random.random() > 0.3:
                     response = response + random.choice(emojis)
@@ -368,18 +391,21 @@ jobs:
             def generate_greetings(self, n=6):
                 """生成问候语"""
                 greetings = []
+                seed_texts = ["你好", "欢迎", "嗨", "您好"]
+                
                 for _ in range(n):
                     try:
                         greeting = self.generate_text(
-                            seed_text=random.choice(["你好", "欢迎", "嗨", "您好"]),
-                            length=25,
+                            seed_text=random.choice(seed_texts),
+                            length=20,
                             temperature=random.uniform(0.6, 0.9)
                         )
-                        # 清理
                         for punct in ['。', '！', '？']:
                             if punct in greeting:
                                 greeting = greeting.split(punct)[0] + punct
                                 break
+                        if len(greeting) < 5:
+                            greeting = random.choice(self.corpus)
                         greetings.append(greeting)
                     except:
                         greetings.append(random.choice(self.corpus))
@@ -387,7 +413,6 @@ jobs:
                 return greetings
         
         def main():
-            # 获取参数
             user_message = sys.argv[1] if len(sys.argv) > 1 else "你好，Gudao是什么？"
             add_phrase = sys.argv[2] if len(sys.argv) > 2 else ""
             epochs = int(sys.argv[3]) if len(sys.argv) > 3 else 50
@@ -395,18 +420,14 @@ jobs:
             print("\n🚀 启动神经网络聊天机器人")
             print("="*70)
             
-            # 初始化
             bot = NeuralChatBot('words.json')
             
-            # 添加词句
             if add_phrase and ':' in add_phrase:
                 category, phrase = add_phrase.split(':', 1)
                 bot.add_phrase(category.strip(), phrase.strip())
             
-            # 训练
             bot.train(epochs=epochs)
             
-            # 生成问候语
             print("\n🎉 生成的问候语:")
             print("-"*70)
             greetings = bot.generate_greetings(n=6)
@@ -415,7 +436,6 @@ jobs:
             
             print("-"*70)
             
-            # 聊天
             print("\n💬 聊天对话:")
             print("-"*70)
             response = bot.generate_response(user_message)
@@ -424,7 +444,6 @@ jobs:
             
             print("-"*70)
             
-            # 统计
             stats = bot.words_data.get('training_stats', {})
             print("\n📊 训练统计:")
             print(f"   - 总词句: {stats.get('total_phrases', 0)} 条")
@@ -432,7 +451,6 @@ jobs:
             print(f"   - 模型准确率: {stats.get('model_accuracy', 'N/A')}")
             print(f"   - 模型损失: {stats.get('model_loss', 'N/A')}")
             
-            # 保存
             with open('greetings_output.txt', 'w', encoding='utf-8') as f:
                 f.write("="*70 + "\n")
                 f.write("🧠 神经网络训练结果\n")
@@ -472,7 +490,6 @@ jobs:
     - name: Run neural network training
       id: train
       run: |
-        # 获取参数
         if [ -n "${{ github.event.inputs.chat_message }}" ]; then
           CHAT_MSG="${{ github.event.inputs.chat_message }}"
         else
@@ -492,7 +509,6 @@ jobs:
           python train_nn.py "$CHAT_MSG" "" "$EPOCHS"
         fi
         
-        # 提取AI回复
         AI_RESPONSE=$(grep "🤖 AI:" greetings_output.txt | head -1 | sed 's/🤖 AI: //')
         echo "ai_response=$AI_RESPONSE" >> $GITHUB_OUTPUT
         echo "✅ 训练完成"
@@ -555,397 +571,4 @@ jobs:
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "### 📁 文件链接" >> $GITHUB_STEP_SUMMARY
         echo "- [words.json](https://github.com/${{ github.repository }}/blob/main/words.json)" >> $GITHUB_STEP_SUMMARY
-        echo "- [greetings_output.txt](https://github.com/${{ github.repository }}/blob/main/greetings_output.txt)" >> $GITHUB_STEP_SUMMARY        cat > greeting_generator.py << 'EOF'
-        import random
-        import re
-        import json
-        import sys
-        from datetime import datetime
-        
-        # ============== 语料库 ==============
-        CORPUS = [
-            # 原始问候语
-            "你好！😊 很高兴见到你！有什么我可以帮你的吗？无论是回答问题、聊天，还是需要一些建议，我都很乐意协助。尽管开口吧！",
-            "你好呀！又见面啦～ 😄",
-            "西瓜是一种非常受欢迎的夏季水果，学名Citrullus lanatus，属于葫芦科植物。它原产于非洲，现在世界各地都有种植。",
-            "嗨！我是DeepSeek，由深度求索公司创造的AI助手。😊",
-            "欢迎来到我的网站！希望您在这里度过愉快的时光。",
-            "您好！请问今天有什么可以帮助您的呢？",
-            "人工智能正在改变世界，让我们一起探索未来！",
-            "天气真好，心情也格外愉快。",
-            "今天是个美好的一天，祝您开心！",
-            "有什么问题尽管问我，我会尽力帮您解答。",
-            
-            # Python打印代码示例
-            "我来为你生成几种常见的Python打印代码示例：基础打印：print('Hello, World!')；格式化打印：f-string用 f'姓名: {name}'；不换行打印用 end=' '；打印到文件用 file=f；打印表格用 f'{name:<10}' 格式化；彩色打印用 ANSI 代码 \\033[颜色m文字\\033[0m；进度条用 \\r 实现动态刷新。",
-            
-            # Gudao网站介绍
-            "Gudao是一个由个人搭建的小型个人网站，网址为gudaoweb.pages.dev，截止目前2026年7月，已包含多种项目和工具。",
-            
-            # 扩展变体
-            "如果你需要Python打印代码，我可以帮你生成基础打印、格式化打印、表格打印等多种示例。",
-            "关于Gudao，它是一个个人网站，包含多个实用项目和工具。",
-            "Python打印有很多技巧，包括f-string、format()、彩色输出和进度条等。",
-            "Gudao网站目前正在不断发展，未来会添加更多功能。",
-            "打印代码可以帮助你更好地调试和展示程序输出。"
-        ]
-        
-        class ChatBot:
-            def __init__(self):
-                self.corpus = CORPUS
-                self.context = []
-                self.prefixes = [
-                    "哦，", "嗯，", "好的，", "是的，", "对了，", 
-                    "其实，", "当然，", "没错，", "哈哈，", "嗨，", 
-                    "您好，", "关于这个问题，", "说到这个，", "我理解，"
-                ]
-                self.suffixes = [
-                    " 祝您开心！", " 有什么我可以帮您的吗？", " 随时为您服务！",
-                    " 很高兴为您服务！", " 希望您喜欢！", " 期待与您交流！",
-                    " 祝您一天愉快！", " 需要帮忙随时说！", " 很高兴认识您！",
-                    " 这个答案对您有帮助吗？", " 欢迎继续提问！", " 祝您编程愉快！"
-                ]
-                self.emojis = ["😊", "😄", "🌟", "✨", "🎉", "💫", "🎈", "❤️", "🔥", "🌈", "💻", "🐍", "🚀", ""]
-            
-            def _simulate_epoch(self, epoch, total):
-                loss = 4.0 * (0.95 ** epoch) + random.uniform(-0.05, 0.05)
-                loss = max(0.01, loss)
-                accuracy = min(0.98, 0.1 + 0.88 * (1 - 0.96 ** epoch))
-                return loss, accuracy
-            
-            def train(self, epochs=100, verbose=True):
-                if verbose:
-                    print("="*70)
-                    print("🤖 训练智能聊天机器人")
-                    print("="*70)
-                    print(f"📚 语料库大小: {len(self.corpus)} 条")
-                    print(f"🔄 训练轮数: {epochs}")
-                    print("-"*70)
-                
-                for epoch in range(1, epochs + 1):
-                    loss, acc = self._simulate_epoch(epoch, epochs)
-                    if verbose and (epoch % 10 == 0 or epoch == epochs):
-                        bar = "█" * int(30 * epoch / epochs) + "░" * int(30 * (1 - epoch / epochs))
-                        print(f"Epoch {epoch:3d}/{epochs} [{bar}] loss: {loss:.4f} acc: {acc:.4f}")
-                
-                print("-"*70)
-                print("✅ 训练完成！")
-                return self
-            
-            def chat(self, user_input):
-                """处理聊天消息"""
-                self.context.append({"user": user_input, "timestamp": datetime.now().isoformat()})
-                
-                response = self._generate_response(user_input)
-                self.context.append({"ai": response, "timestamp": datetime.now().isoformat()})
-                
-                return response
-            
-            def _generate_response(self, user_input):
-                """根据用户输入生成响应"""
-                user_lower = user_input.lower()
-                
-                # 检测Python打印相关
-                if any(keyword in user_lower for keyword in ["打印", "print", "python打印"]):
-                    responses = [
-                        "我可以帮你生成Python打印代码！基础用法：print('Hello')，格式化：f'姓名: {name}'，表格打印用 f'{name:<10}'。",
-                        "Python打印有很多方式：用 f-string 格式化，用 print(..., end=' ') 不换行，用 print(..., file=f) 写入文件。",
-                        "需要彩色打印吗？可以用 ANSI 转义码，或者安装 colorama 库。",
-                        "打印代码示例：\n```python\nprint('Hello, World!')\nname = 'Alice'\nprint(f'姓名: {name}')\n```"
-                    ]
-                    return random.choice(responses) + " 😊"
-                
-                # 检测Gudao相关
-                elif any(keyword in user_lower for keyword in ["gudao", "网站", "个人网站"]):
-                    responses = [
-                        "Gudao是一个个人网站，网址是 gudaoweb.pages.dev，包含多种项目和工具。",
-                        "Gudao由个人搭建，目前已有多个实用项目，欢迎访问！",
-                        "关于Gudao，它是一个不断发展的个人网站，您可以访问 gudaoweb.pages.dev 了解更多。",
-                        "Gudao网站包含多种项目，包括工具、博客等，欢迎探索！"
-                    ]
-                    return random.choice(responses) + " 🚀"
-                
-                # 检测问候
-                elif any(keyword in user_lower for keyword in ["你好", "嗨", "hello", "hi"]):
-                    responses = [
-                        "你好！很高兴见到你！有什么我可以帮你的吗？ 😊",
-                        "嗨！欢迎来到我的聊天室！今天想聊什么呢？ 🌟",
-                        "你好呀！又见面啦～ 有什么需要我帮忙的吗？ 😄"
-                    ]
-                    return random.choice(responses)
-                
-                # 默认响应
-                else:
-                    base = random.choice(self.corpus)
-                    prefix = random.choice(self.prefixes) if random.random() > 0.4 else ""
-                    suffix = random.choice(self.suffixes) if random.random() > 0.4 else ""
-                    emoji = random.choice(self.emojis) if random.random() > 0.3 else ""
-                    
-                    response = prefix + base + suffix
-                    if emoji:
-                        response = response + " " + emoji
-                    
-                    return response
-            
-            def generate_greetings(self, n=5):
-                """生成多条问候语"""
-                greetings = []
-                for _ in range(n):
-                    base = random.choice(self.corpus)
-                    prefix = random.choice(self.prefixes) if random.random() > 0.3 else ""
-                    suffix = random.choice(self.suffixes) if random.random() > 0.3 else ""
-                    emoji = random.choice(self.emojis) if random.random() > 0.2 else ""
-                    
-                    greeting = prefix + base + suffix
-                    if emoji:
-                        greeting = greeting + " " + emoji
-                    
-                    greeting = re.sub(r'[！？。]+', lambda m: m.group(0)[0], greeting)
-                    greetings.append(greeting)
-                
-                return greetings
-            
-            def get_context(self):
-                """获取对话上下文"""
-                return self.context
-        
-        def main():
-            # 获取用户输入（从命令行参数或环境变量）
-            user_message = sys.argv[1] if len(sys.argv) > 1 else "你好，Gudao是什么？"
-            
-            print("\n🚀 启动智能聊天机器人")
-            print("="*70)
-            print(f"💬 用户消息: {user_message}")
-            print("="*70)
-            
-            bot = ChatBot()
-            bot.train(epochs=100)
-            
-            # 生成问候语
-            print("\n🎉 生成的问候语:")
-            print("-"*70)
-            greetings = bot.generate_greetings(n=6)
-            for i, g in enumerate(greetings, 1):
-                print(f"📝 {i}: {g}")
-            
-            print("-"*70)
-            
-            # 处理聊天
-            print("\n💬 聊天对话:")
-            print("-"*70)
-            response = bot.chat(user_message)
-            print(f"👤 用户: {user_message}")
-            print(f"🤖 AI: {response}")
-            
-            # 如果有上下文，显示更多
-            if len(bot.get_context()) > 2:
-                print("\n📋 完整对话历史:")
-                for entry in bot.get_context():
-                    if "user" in entry:
-                        print(f"  👤 用户: {entry['user']}")
-                    else:
-                        print(f"  🤖 AI: {entry['ai']}")
-            
-            print("-"*70)
-            print("💾 保存结果...")
-            
-            # 保存到文件
-            with open('greetings_output.txt', 'w', encoding='utf-8') as f:
-                f.write("="*70 + "\n")
-                f.write("🎉 生成的问候语\n")
-                f.write(f"📅 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-                f.write("="*70 + "\n\n")
-                for i, g in enumerate(greetings, 1):
-                    f.write(f"{i}. {g}\n")
-                
-                f.write("\n" + "="*70 + "\n")
-                f.write("💬 聊天对话\n")
-                f.write("="*70 + "\n\n")
-                f.write(f"👤 用户: {user_message}\n")
-                f.write(f"🤖 AI: {response}\n")
-                
-                if len(bot.get_context()) > 2:
-                    f.write("\n📋 完整对话历史:\n")
-                    f.write("-"*70 + "\n")
-                    for entry in bot.get_context():
-                        if "user" in entry:
-                            f.write(f"👤 用户: {entry['user']}\n")
-                        else:
-                            f.write(f"🤖 AI: {entry['ai']}\n")
-                
-                f.write("\n" + "="*70 + "\n")
-                f.write(f"📊 统计: 语料库 {len(CORPUS)} 条\n")
-                f.write("="*70 + "\n")
-            
-            # JSON输出
-            output_data = {
-                'timestamp': datetime.now().isoformat(),
-                'user_message': user_message,
-                'ai_response': response,
-                'greetings': greetings,
-                'corpus_size': len(CORPUS),
-                'chat_history': bot.get_context()
-            }
-            
-            with open('greetings_output.json', 'w', encoding='utf-8') as f:
-                json.dump(output_data, f, ensure_ascii=False, indent=2)
-            
-            print("✅ 文件已保存:")
-            print("   - greetings_output.txt")
-            print("   - greetings_output.json")
-            
-            print("\n" + "="*70)
-            print("✅ 模型输出结果:")
-            print(f"   👤 用户消息: {user_message}")
-            print(f"   🤖 AI回复: {response}")
-            print("="*70)
-            print("\n🎊 运行完成！")
-        
-        if __name__ == "__main__":
-            main()
-        EOF
-        echo "✅ 脚本创建完成"
-    
-    - name: Run greeting generator with chat
-      id: chat
-      run: |
-        # 获取用户输入
-        if [ -n "${{ github.event.inputs.chat_message }}" ]; then
-          CHAT_MSG="${{ github.event.inputs.chat_message }}"
-        else
-          CHAT_MSG="你好，Gudao是什么？"
-        fi
-        echo "💬 处理消息: $CHAT_MSG"
-        python greeting_generator.py "$CHAT_MSG"
-        
-        # 提取AI回复
-        AI_RESPONSE=$(grep "🤖 AI:" greetings_output.txt | head -1 | sed 's/🤖 AI: //')
-        echo "ai_response=$AI_RESPONSE" >> $GITHUB_OUTPUT
-        echo "✅ 问候语生成完成"
-    
-    - name: Display generated output
-      run: |
-        echo "📄 生成的完整输出："
-        echo "-------------------"
-        cat greetings_output.txt
-        echo "-------------------"
-        echo ""
-        echo "📊 JSON格式："
-        cat greetings_output.json
-    
-    - name: Create issue comment with results
-      if: github.event_name == 'workflow_dispatch'
-      uses: actions/github-script@v7
-      with:
-        script: |
-          const fs = require('fs');
-          const output = fs.readFileSync('greetings_output.txt', 'utf8');
-          
-          // 提取AI回复
-          const aiMatch = output.match(/🤖 AI: (.+)/);
-          const aiResponse = aiMatch ? aiMatch[1] : '未找到回复';
-          
-          // 提取用户消息
-          const userMatch = output.match(/👤 用户: (.+)/);
-          const userMessage = userMatch ? userMatch[1] : '未找到消息';
-          
-          // 创建评论
-          const comment = `## 💬 聊天结果
-          
-          ### 用户消息
-          > ${userMessage}
-          
-          ### AI 回复
-          > ${aiResponse}
-          
-          ### 📝 生成的问候语
-          ${output.split('📝 ').slice(1).map(line => `- ${line.trim()}`).join('\n')}
-          
-          ### 📊 完整输出
-          <details>
-          <summary>点击查看完整输出</summary>
-          
-          \`\`\`
-          ${output}
-          \`\`\`
-          </details>
-          
-          ---
-          🤖 自动生成于 ${new Date().toLocaleString('zh-CN')}
-          `;
-          
-          // 创建issue评论
-          const { data: issues } = await github.rest.issues.listForRepo({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            state: 'open',
-            labels: 'chat-result'
-          });
-          
-          let issueNumber;
-          if (issues.length > 0) {
-            issueNumber = issues[0].number;
-          } else {
-            const { data: newIssue } = await github.rest.issues.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: '💬 Chat Results',
-              body: '自动生成的聊天结果汇总',
-              labels: ['chat-result']
-            });
-            issueNumber = newIssue.number;
-          }
-          
-          await github.rest.issues.createComment({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            issue_number: issueNumber,
-            body: comment
-          });
-    
-    - name: Commit and push changes
-      run: |
-        git config --local user.email "action@github.com"
-        git config --local user.name "GitHub Action"
-        git remote set-url origin https://x-access-token:${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}
-        git add greetings_output.txt greetings_output.json
-        if ! git diff --staged --quiet; then
-          git commit -m "🤖 Auto-generate greetings with chat [skip ci]"
-          git push
-          echo "✅ 文件已提交并推送"
-        else
-          echo "✅ 没有新的更改需要提交"
-        fi
-    
-    - name: Upload artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: generated-greetings-with-chat
-        path: |
-          greetings_output.txt
-          greetings_output.json
-        retention-days: 30
-    
-    - name: Summary output
-      run: |
-        echo "## 🎉 聊天结果" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "### 💬 用户消息" >> $GITHUB_STEP_SUMMARY
-        echo "${{ github.event.inputs.chat_message || '你好，Gudao是什么？' }}" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "### 🤖 AI 回复" >> $GITHUB_STEP_SUMMARY
-        echo "${{ steps.chat.outputs.ai_response }}" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "### 📝 生成的问候语" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        while IFS= read -r line; do
-          if [[ $line =~ ^[0-9]+\. ]]; then
-            echo "- $line" >> $GITHUB_STEP_SUMMARY
-          fi
-        done < greetings_output.txt
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "### 📊 统计信息" >> $GITHUB_STEP_SUMMARY
-        echo "- 语料库大小: 15 条" >> $GITHUB_STEP_SUMMARY
-        echo "- 生成时间: $(date '+%Y-%m-%d %H:%M:%S')" >> $GITHUB_STEP_SUMMARY
-        echo "- 查看详情: [greetings_output.txt](https://github.com/${{ github.repository }}/blob/main/greetings_output.txt)" >> $GITHUB_STEP_SUMMARY
-        echo "- 查看JSON: [greetings_output.json](https://github.com/${{ github.repository }}/blob/main/greetings_output.json)" >> $GITHUB_STEP_SUMMARY
+        echo "- [greetings_output.txt](https://github.com/${{ github.repository }}/blob/main/greetings_output.txt)" >> $GITHUB_STEP_SUMMARY
