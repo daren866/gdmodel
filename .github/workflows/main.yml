@@ -1,4 +1,4 @@
-name: Train and Generate Greetings
+name: Train and Generate Greetings with Chat
 
 on:
   push:
@@ -6,12 +6,20 @@ on:
   schedule:
     - cron: '0 2 * * *'
   workflow_dispatch:
+    inputs:
+      chat_message:
+        description: '💬 输入聊天消息（例如：帮我生成python打印代码）'
+        required: false
+        default: '你好，Gudao是什么？'
+        type: string
 
 jobs:
   train-and-generate:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      issues: write
+      pull-requests: write
     
     steps:
     - name: Checkout repository
@@ -24,13 +32,13 @@ jobs:
       with:
         python-version: '3.11'
     
-    - name: Create greeting generator script
+    - name: Create greeting generator with chat support
       run: |
         cat > greeting_generator.py << 'EOF'
         import random
-        import time
         import re
         import json
+        import sys
         from datetime import datetime
         
         # ============== 语料库 ==============
@@ -61,9 +69,10 @@ jobs:
             "打印代码可以帮助你更好地调试和展示程序输出。"
         ]
         
-        class GreetingGenerator:
+        class ChatBot:
             def __init__(self):
                 self.corpus = CORPUS
+                self.context = []
                 self.prefixes = [
                     "哦，", "嗯，", "好的，", "是的，", "对了，", 
                     "其实，", "当然，", "没错，", "哈哈，", "嗨，", 
@@ -76,7 +85,6 @@ jobs:
                     " 这个答案对您有帮助吗？", " 欢迎继续提问！", " 祝您编程愉快！"
                 ]
                 self.emojis = ["😊", "😄", "🌟", "✨", "🎉", "💫", "🎈", "❤️", "🔥", "🌈", "💻", "🐍", "🚀", ""]
-                self.history = []
             
             def _simulate_epoch(self, epoch, total):
                 loss = 4.0 * (0.95 ** epoch) + random.uniform(-0.05, 0.05)
@@ -87,10 +95,9 @@ jobs:
             def train(self, epochs=100, verbose=True):
                 if verbose:
                     print("="*70)
-                    print("🤖 训练智能问候语生成器")
+                    print("🤖 训练智能聊天机器人")
                     print("="*70)
                     print(f"📚 语料库大小: {len(self.corpus)} 条")
-                    print(f"📝 总字符数: {sum(len(text) for text in self.corpus)}")
                     print(f"🔄 训练轮数: {epochs}")
                     print("-"*70)
                 
@@ -104,7 +111,63 @@ jobs:
                 print("✅ 训练完成！")
                 return self
             
-            def generate(self, n=5):
+            def chat(self, user_input):
+                """处理聊天消息"""
+                self.context.append({"user": user_input, "timestamp": datetime.now().isoformat()})
+                
+                response = self._generate_response(user_input)
+                self.context.append({"ai": response, "timestamp": datetime.now().isoformat()})
+                
+                return response
+            
+            def _generate_response(self, user_input):
+                """根据用户输入生成响应"""
+                user_lower = user_input.lower()
+                
+                # 检测Python打印相关
+                if any(keyword in user_lower for keyword in ["打印", "print", "python打印"]):
+                    responses = [
+                        "我可以帮你生成Python打印代码！基础用法：print('Hello')，格式化：f'姓名: {name}'，表格打印用 f'{name:<10}'。",
+                        "Python打印有很多方式：用 f-string 格式化，用 print(..., end=' ') 不换行，用 print(..., file=f) 写入文件。",
+                        "需要彩色打印吗？可以用 ANSI 转义码，或者安装 colorama 库。",
+                        "打印代码示例：\n```python\nprint('Hello, World!')\nname = 'Alice'\nprint(f'姓名: {name}')\n```"
+                    ]
+                    return random.choice(responses) + " 😊"
+                
+                # 检测Gudao相关
+                elif any(keyword in user_lower for keyword in ["gudao", "网站", "个人网站"]):
+                    responses = [
+                        "Gudao是一个个人网站，网址是 gudaoweb.pages.dev，包含多种项目和工具。",
+                        "Gudao由个人搭建，目前已有多个实用项目，欢迎访问！",
+                        "关于Gudao，它是一个不断发展的个人网站，您可以访问 gudaoweb.pages.dev 了解更多。",
+                        "Gudao网站包含多种项目，包括工具、博客等，欢迎探索！"
+                    ]
+                    return random.choice(responses) + " 🚀"
+                
+                # 检测问候
+                elif any(keyword in user_lower for keyword in ["你好", "嗨", "hello", "hi"]):
+                    responses = [
+                        "你好！很高兴见到你！有什么我可以帮你的吗？ 😊",
+                        "嗨！欢迎来到我的聊天室！今天想聊什么呢？ 🌟",
+                        "你好呀！又见面啦～ 有什么需要我帮忙的吗？ 😄"
+                    ]
+                    return random.choice(responses)
+                
+                # 默认响应
+                else:
+                    base = random.choice(self.corpus)
+                    prefix = random.choice(self.prefixes) if random.random() > 0.4 else ""
+                    suffix = random.choice(self.suffixes) if random.random() > 0.4 else ""
+                    emoji = random.choice(self.emojis) if random.random() > 0.3 else ""
+                    
+                    response = prefix + base + suffix
+                    if emoji:
+                        response = response + " " + emoji
+                    
+                    return response
+            
+            def generate_greetings(self, n=5):
+                """生成多条问候语"""
                 greetings = []
                 for _ in range(n):
                     base = random.choice(self.corpus)
@@ -118,65 +181,54 @@ jobs:
                     
                     greeting = re.sub(r'[！？。]+', lambda m: m.group(0)[0], greeting)
                     greetings.append(greeting)
-                    self.history.append(greeting)
                 
                 return greetings
             
-            def generate_response(self, user_input=""):
-                if "打印" in user_input or "print" in user_input.lower():
-                    responses = [
-                        "我可以帮你生成Python打印代码！基础用法：print('Hello')，格式化：f'姓名: {name}'，表格打印用 f'{name:<10}'。",
-                        "Python打印有很多方式：用 f-string 格式化，用 print(..., end=' ') 不换行，用 print(..., file=f) 写入文件。",
-                        "需要彩色打印吗？可以用 ANSI 转义码，或者安装 colorama 库。"
-                    ]
-                    return random.choice(responses) + " 😊"
-                elif "gudao" in user_input.lower() or "网站" in user_input:
-                    responses = [
-                        "Gudao是一个个人网站，网址是 gudaoweb.pages.dev，包含多种项目和工具。",
-                        "Gudao由个人搭建，目前已有多个实用项目，欢迎访问！",
-                        "关于Gudao，它是一个不断发展的个人网站，您可以访问 gudaoweb.pages.dev 了解更多。"
-                    ]
-                    return random.choice(responses) + " 🚀"
-                else:
-                    return random.choice(self.generate(n=1))
+            def get_context(self):
+                """获取对话上下文"""
+                return self.context
         
         def main():
-            print("\n🚀 启动智能问候语生成器")
+            # 获取用户输入（从命令行参数或环境变量）
+            user_message = sys.argv[1] if len(sys.argv) > 1 else "你好，Gudao是什么？"
+            
+            print("\n🚀 启动智能聊天机器人")
             print("="*70)
-            print("📌 新语料已包含：")
-            print("   - Python打印代码示例")
-            print("   - Gudao网站介绍")
+            print(f"💬 用户消息: {user_message}")
             print("="*70)
             
-            generator = GreetingGenerator()
-            generator.train(epochs=100)
+            bot = ChatBot()
+            bot.train(epochs=100)
             
+            # 生成问候语
             print("\n🎉 生成的问候语:")
             print("-"*70)
-            greetings = generator.generate(n=6)
+            greetings = bot.generate_greetings(n=6)
             for i, g in enumerate(greetings, 1):
                 print(f"📝 {i}: {g}")
             
             print("-"*70)
             
-            print("\n🧪 场景测试:")
+            # 处理聊天
+            print("\n💬 聊天对话:")
             print("-"*70)
-            test_inputs = [
-                "帮我生成python的打印代码",
-                "Gudao是什么？",
-                "你好啊"
-            ]
-            test_results = []
-            for user_input in test_inputs:
-                response = generator.generate_response(user_input)
-                test_results.append({'user': user_input, 'ai': response})
-                print(f"👤 用户: {user_input}")
-                print(f"🤖 AI: {response}")
-                print()
+            response = bot.chat(user_message)
+            print(f"👤 用户: {user_message}")
+            print(f"🤖 AI: {response}")
+            
+            # 如果有上下文，显示更多
+            if len(bot.get_context()) > 2:
+                print("\n📋 完整对话历史:")
+                for entry in bot.get_context():
+                    if "user" in entry:
+                        print(f"  👤 用户: {entry['user']}")
+                    else:
+                        print(f"  🤖 AI: {entry['ai']}")
             
             print("-"*70)
             print("💾 保存结果...")
             
+            # 保存到文件
             with open('greetings_output.txt', 'w', encoding='utf-8') as f:
                 f.write("="*70 + "\n")
                 f.write("🎉 生成的问候语\n")
@@ -186,21 +238,32 @@ jobs:
                     f.write(f"{i}. {g}\n")
                 
                 f.write("\n" + "="*70 + "\n")
-                f.write("🧪 场景测试结果\n")
+                f.write("💬 聊天对话\n")
                 f.write("="*70 + "\n\n")
-                for result in test_results:
-                    f.write(f"👤 用户: {result['user']}\n")
-                    f.write(f"🤖 AI: {result['ai']}\n\n")
+                f.write(f"👤 用户: {user_message}\n")
+                f.write(f"🤖 AI: {response}\n")
                 
-                f.write("="*70 + "\n")
+                if len(bot.get_context()) > 2:
+                    f.write("\n📋 完整对话历史:\n")
+                    f.write("-"*70 + "\n")
+                    for entry in bot.get_context():
+                        if "user" in entry:
+                            f.write(f"👤 用户: {entry['user']}\n")
+                        else:
+                            f.write(f"🤖 AI: {entry['ai']}\n")
+                
+                f.write("\n" + "="*70 + "\n")
                 f.write(f"📊 统计: 语料库 {len(CORPUS)} 条\n")
                 f.write("="*70 + "\n")
             
+            # JSON输出
             output_data = {
                 'timestamp': datetime.now().isoformat(),
+                'user_message': user_message,
+                'ai_response': response,
                 'greetings': greetings,
                 'corpus_size': len(CORPUS),
-                'test_scenarios': test_results
+                'chat_history': bot.get_context()
             }
             
             with open('greetings_output.json', 'w', encoding='utf-8') as f:
@@ -211,8 +274,9 @@ jobs:
             print("   - greetings_output.json")
             
             print("\n" + "="*70)
-            print("✅ 测试输出 '你好' 问候语:")
-            print(f"   {greetings[0]}")
+            print("✅ 模型输出结果:")
+            print(f"   👤 用户消息: {user_message}")
+            print(f"   🤖 AI回复: {response}")
             print("="*70)
             print("\n🎊 运行完成！")
         
@@ -221,20 +285,102 @@ jobs:
         EOF
         echo "✅ 脚本创建完成"
     
-    - name: Run greeting generator
+    - name: Run greeting generator with chat
+      id: chat
       run: |
-        python greeting_generator.py
+        # 获取用户输入
+        if [ -n "${{ github.event.inputs.chat_message }}" ]; then
+          CHAT_MSG="${{ github.event.inputs.chat_message }}"
+        else
+          CHAT_MSG="你好，Gudao是什么？"
+        fi
+        echo "💬 处理消息: $CHAT_MSG"
+        python greeting_generator.py "$CHAT_MSG"
+        
+        # 提取AI回复
+        AI_RESPONSE=$(grep "🤖 AI:" greetings_output.txt | head -1 | sed 's/🤖 AI: //')
+        echo "ai_response=$AI_RESPONSE" >> $GITHUB_OUTPUT
         echo "✅ 问候语生成完成"
     
-    - name: Display generated greetings
+    - name: Display generated output
       run: |
-        echo "📄 生成的问候语："
+        echo "📄 生成的完整输出："
         echo "-------------------"
         cat greetings_output.txt
         echo "-------------------"
         echo ""
         echo "📊 JSON格式："
         cat greetings_output.json
+    
+    - name: Create issue comment with results
+      if: github.event_name == 'workflow_dispatch'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const output = fs.readFileSync('greetings_output.txt', 'utf8');
+          
+          // 提取AI回复
+          const aiMatch = output.match(/🤖 AI: (.+)/);
+          const aiResponse = aiMatch ? aiMatch[1] : '未找到回复';
+          
+          // 提取用户消息
+          const userMatch = output.match(/👤 用户: (.+)/);
+          const userMessage = userMatch ? userMatch[1] : '未找到消息';
+          
+          // 创建评论
+          const comment = `## 💬 聊天结果
+          
+          ### 用户消息
+          > ${userMessage}
+          
+          ### AI 回复
+          > ${aiResponse}
+          
+          ### 📝 生成的问候语
+          ${output.split('📝 ').slice(1).map(line => `- ${line.trim()}`).join('\n')}
+          
+          ### 📊 完整输出
+          <details>
+          <summary>点击查看完整输出</summary>
+          
+          \`\`\`
+          ${output}
+          \`\`\`
+          </details>
+          
+          ---
+          🤖 自动生成于 ${new Date().toLocaleString('zh-CN')}
+          `;
+          
+          // 创建issue评论
+          const { data: issues } = await github.rest.issues.listForRepo({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            state: 'open',
+            labels: 'chat-result'
+          });
+          
+          let issueNumber;
+          if (issues.length > 0) {
+            issueNumber = issues[0].number;
+          } else {
+            const { data: newIssue } = await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: '💬 Chat Results',
+              body: '自动生成的聊天结果汇总',
+              labels: ['chat-result']
+            });
+            issueNumber = newIssue.number;
+          }
+          
+          await github.rest.issues.createComment({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: issueNumber,
+            body: comment
+          });
     
     - name: Commit and push changes
       run: |
@@ -243,7 +389,7 @@ jobs:
         git remote set-url origin https://x-access-token:${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}
         git add greetings_output.txt greetings_output.json
         if ! git diff --staged --quiet; then
-          git commit -m "🤖 Auto-generate greetings with Python printing and Gudao info [skip ci]"
+          git commit -m "🤖 Auto-generate greetings with chat [skip ci]"
           git push
           echo "✅ 文件已提交并推送"
         else
@@ -253,7 +399,7 @@ jobs:
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: generated-greetings
+        name: generated-greetings-with-chat
         path: |
           greetings_output.txt
           greetings_output.json
@@ -261,9 +407,15 @@ jobs:
     
     - name: Summary output
       run: |
-        echo "## 🎉 问候语生成完成" >> $GITHUB_STEP_SUMMARY
+        echo "## 🎉 聊天结果" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "### 📝 生成的问候语：" >> $GITHUB_STEP_SUMMARY
+        echo "### 💬 用户消息" >> $GITHUB_STEP_SUMMARY
+        echo "${{ github.event.inputs.chat_message || '你好，Gudao是什么？' }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 🤖 AI 回复" >> $GITHUB_STEP_SUMMARY
+        echo "${{ steps.chat.outputs.ai_response }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 📝 生成的问候语" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         while IFS= read -r line; do
           if [[ $line =~ ^[0-9]+\. ]]; then
@@ -271,13 +423,8 @@ jobs:
           fi
         done < greetings_output.txt
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "### 🧪 场景测试：" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "| 用户输入 | AI 回复 |" >> $GITHUB_STEP_SUMMARY
-        echo "|----------|---------|" >> $GITHUB_STEP_SUMMARY
-        grep -A1 "👤 用户" greetings_output.txt | grep -v "^-" | sed 's/👤 用户: /| /' | sed 's/🤖 AI: /| /' | sed 's/$/ |/' >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "### 📊 统计信息：" >> $GITHUB_STEP_SUMMARY
+        echo "### 📊 统计信息" >> $GITHUB_STEP_SUMMARY
         echo "- 语料库大小: 15 条" >> $GITHUB_STEP_SUMMARY
         echo "- 生成时间: $(date '+%Y-%m-%d %H:%M:%S')" >> $GITHUB_STEP_SUMMARY
         echo "- 查看详情: [greetings_output.txt](https://github.com/${{ github.repository }}/blob/main/greetings_output.txt)" >> $GITHUB_STEP_SUMMARY
+        echo "- 查看JSON: [greetings_output.json](https://github.com/${{ github.repository }}/blob/main/greetings_output.json)" >> $GITHUB_STEP_SUMMARY
