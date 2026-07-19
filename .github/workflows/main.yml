@@ -12,7 +12,7 @@ on:
       chat_message:
         description: '💬 输入聊天消息测试'
         required: false
-        default: '你好，Gudao是什么？'
+        default: '你好'
         type: string
       add_phrase:
         description: '✏️ 添加新词句到语料库（格式：类别:内容）'
@@ -83,6 +83,7 @@ jobs:
         import os
         import sys
         import random
+        import re
         import numpy as np
         import tensorflow as tf
         from tensorflow import keras
@@ -90,7 +91,7 @@ jobs:
         from datetime import datetime
         
         print("="*70)
-        print("🧠 神经网络训练器")
+        print("🧠 神经网络训练器（回退方案优先）")
         print("="*70)
         print(f"TensorFlow 版本: {tf.__version__}")
         print(f"NumPy 版本: {np.__version__}")
@@ -100,7 +101,7 @@ jobs:
         LSTM_UNITS = 128
         BATCH_SIZE = 32
         
-        # ============== 默认语料库 ==============
+        # ============== 默认语料库（保留中文字符） ==============
         DEFAULT_WORDS = {
             "version": "2.0",
             "created_at": datetime.now().isoformat(),
@@ -150,9 +151,60 @@ jobs:
         }
         
         def clean_text(text):
-            import re
+            # 保留中文字符、字母、数字、常用标点，移除表情和特殊符号
             cleaned = re.sub(r'[^\u4e00-\u9fa5a-zA-Z0-9，。！？、：；""''（）\n]', '', text)
             return cleaned
+        
+        class RuleBasedGenerator:
+            """基于规则的生成器（回退方案）"""
+            def __init__(self, corpus, intent_patterns):
+                self.corpus = corpus
+                self.intent_patterns = intent_patterns
+                self.prefixes = ["哦，", "嗯，", "好的，", "是的，", "其实，", "当然，", "我理解，", "关于这个问题，", ""]
+                self.suffixes = [" 😊", " 😄", " 🌟", " ✨", " 🚀", " 💻", " 🎉", ""]
+            
+            def generate_response(self, user_input):
+                user_lower = user_input.lower()
+                matched_category = None
+                for pattern, category in self.intent_patterns.items():
+                    if any(keyword in user_lower for keyword in pattern.split('|')):
+                        matched_category = category
+                        break
+                
+                if matched_category and matched_category in self.corpus:
+                    phrases = self.corpus[matched_category]
+                    if phrases:
+                        response = random.choice(phrases)
+                    else:
+                        response = random.choice(self.corpus.get('general', ['你好']))
+                else:
+                    # 从所有句子中随机选
+                    all_phrases = []
+                    for cat in self.corpus.values():
+                        all_phrases.extend(cat)
+                    if all_phrases:
+                        response = random.choice(all_phrases)
+                    else:
+                        response = "你好，很高兴见到你！"
+                
+                # 添加前后缀
+                prefix = random.choice(self.prefixes) if random.random() > 0.3 else ""
+                suffix = random.choice(self.suffixes) if random.random() > 0.3 else ""
+                return prefix + response + suffix
+            
+            def generate_greetings(self, n=6):
+                all_phrases = []
+                for cat in self.corpus.values():
+                    all_phrases.extend(cat)
+                if not all_phrases:
+                    all_phrases = ["你好"]
+                greetings = []
+                for _ in range(n):
+                    base = random.choice(all_phrases)
+                    prefix = random.choice(self.prefixes) if random.random() > 0.4 else ""
+                    suffix = random.choice(self.suffixes) if random.random() > 0.4 else ""
+                    greetings.append(prefix + base + suffix)
+                return greetings
         
         class NeuralChatBot:
             def __init__(self, words_file='words.json'):
@@ -164,8 +216,12 @@ jobs:
                 self.vocab_size = 0
                 self.model = None
                 self.seq_length = 15
-                # 使用 .keras 扩展名，Keras 3 推荐格式
                 self.model_path = 'model.keras'
+                # 初始化规则生成器
+                self.rule_gen = RuleBasedGenerator(
+                    self.words_data.get('corpus', {}),
+                    self.words_data.get('intent_patterns', {})
+                )
             
             def _load_or_create_words(self):
                 if os.path.exists(self.words_file):
@@ -182,20 +238,26 @@ jobs:
                     return DEFAULT_WORDS.copy()
             
             def _build_corpus(self):
-                corpus = []
+                corpus = {}
                 for category, phrases in self.words_data.get('corpus', {}).items():
+                    cleaned_list = []
                     for phrase in phrases:
                         cleaned = clean_text(phrase)
                         if cleaned:
-                            corpus.append(cleaned)
-                # 如果语料库为空，使用默认语料
+                            cleaned_list.append(cleaned)
+                    if cleaned_list:
+                        corpus[category] = cleaned_list
+                # 如果所有类别都为空，使用默认
                 if not corpus:
                     print("⚠️ 语料库为空，使用默认语料")
                     for category, phrases in DEFAULT_WORDS['corpus'].items():
+                        cleaned_list = []
                         for phrase in phrases:
                             cleaned = clean_text(phrase)
                             if cleaned:
-                                corpus.append(cleaned)
+                                cleaned_list.append(cleaned)
+                        if cleaned_list:
+                            corpus[category] = cleaned_list
                 return corpus
             
             def add_phrase(self, category, phrase):
@@ -203,10 +265,13 @@ jobs:
                 if not cleaned:
                     print("⚠️ 词句为空，跳过")
                     return
+                if category not in self.corpus:
+                    self.corpus[category] = []
+                self.corpus[category].append(cleaned)
+                # 更新 words_data 并保存
                 if category not in self.words_data['corpus']:
                     self.words_data['corpus'][category] = []
                 self.words_data['corpus'][category].append(cleaned)
-                self.corpus.append(cleaned)
                 self.words_data['last_updated'] = datetime.now().isoformat()
                 self._save_words()
                 print(f"✅ 添加词句: [{category}] {cleaned[:30]}...")
@@ -216,27 +281,26 @@ jobs:
                     json.dump(self.words_data, f, ensure_ascii=False, indent=2)
             
             def _build_vocab(self):
-                all_text = ''.join(self.corpus)
+                # 从所有语料中提取字符
+                all_text = ''.join([phrase for cat in self.corpus.values() for phrase in cat])
                 if not all_text:
                     all_text = "你好世界"
-                
                 chars = sorted(set(all_text))
                 self.char2idx = {char: idx for idx, char in enumerate(chars)}
                 self.idx2char = {idx: char for char, idx in self.char2idx.items()}
                 self.vocab_size = len(chars)
-                
                 print(f"🔤 词汇表大小: {self.vocab_size} 个字符")
                 return self
             
             def _prepare_data(self, seq_length=15):
-                text = ''.join(self.corpus)
-                if not text:
-                    text = "你好世界"
+                # 合并所有语料为一个长字符串
+                all_text = ''.join([phrase for cat in self.corpus.values() for phrase in cat])
+                if not all_text:
+                    all_text = "你好世界"
                 
                 valid_chars = set(self.char2idx.keys())
-                filtered_text = ''.join([c for c in text if c in valid_chars])
+                filtered_text = ''.join([c for c in all_text if c in valid_chars])
                 
-                # 如果 filtered_text 为空，抛出异常
                 if not filtered_text:
                     raise ValueError("filtered_text is empty, cannot prepare training data.")
                 
@@ -246,7 +310,6 @@ jobs:
                 
                 sequences = []
                 next_chars = []
-                
                 for i in range(0, len(filtered_text) - seq_length):
                     seq = filtered_text[i:i+seq_length]
                     next_char = filtered_text[i+seq_length]
@@ -261,18 +324,14 @@ jobs:
                 
                 X = np.array(sequences)
                 y = np.array(next_chars)
-                
                 X_one_hot = tf.one_hot(X, depth=self.vocab_size)
                 y_one_hot = tf.one_hot(y, depth=self.vocab_size)
-                
                 print(f"📊 训练样本数: {len(X)}")
                 print(f"📐 输入形状: {X_one_hot.shape}")
-                
                 return X_one_hot, y_one_hot
             
             def build_model(self):
                 self._build_vocab()
-                
                 model = keras.Sequential([
                     layers.LSTM(LSTM_UNITS, 
                                 input_shape=(self.seq_length, self.vocab_size),
@@ -282,16 +341,13 @@ jobs:
                                 dropout=0.2),
                     layers.Dense(self.vocab_size, activation='softmax')
                 ])
-                
                 model.compile(
                     optimizer=keras.optimizers.Adam(learning_rate=0.01),
                     loss='categorical_crossentropy',
                     metrics=['accuracy']
                 )
-                
                 print("\n🧠 模型架构:")
                 print(model.summary())
-                
                 self.model = model
                 return model
             
@@ -300,16 +356,20 @@ jobs:
                     print("\n" + "="*70)
                     print("🚀 开始训练神经网络")
                     print("="*70)
-                    print(f"📚 语料库: {len(self.corpus)} 条词句")
-                    print(f"📂 类别数: {len(self.words_data.get('corpus', {}))} 个")
+                    # 统计总语料条数
+                    total_phrases = sum(len(v) for v in self.corpus.values())
+                    print(f"📚 语料库: {total_phrases} 条词句")
+                    print(f"📂 类别数: {len(self.corpus)} 个")
                     print(f"🔄 训练轮数: {epochs}")
                     print("-"*70)
                 
                 try:
-                    # 先构建词汇表
                     self._build_vocab()
-                    
                     X_train, y_train = self._prepare_data(self.seq_length)
+                    num_samples = len(X_train)
+                    if num_samples < 10:
+                        print(f"⚠️ 训练样本太少（{num_samples}），无法有效训练，跳过神经网络训练")
+                        return None
                     
                     if self.model is None:
                         self.build_model()
@@ -319,12 +379,7 @@ jobs:
                         keras.callbacks.ReduceLROnPlateau(factor=0.5, patience=5)
                     ]
                     
-                    num_samples = len(X_train)
-                    if num_samples > 10:
-                        val_split = min(0.1, 1 - 1/num_samples)
-                    else:
-                        val_split = 0.0
-                    
+                    val_split = min(0.1, 1 - 1/num_samples) if num_samples > 10 else 0.0
                     print(f"📊 训练样本数: {num_samples}, 验证集比例: {val_split:.2f}")
                     
                     history = self.model.fit(
@@ -339,19 +394,17 @@ jobs:
                     final_acc = history.history['accuracy'][-1]
                     final_loss = history.history['loss'][-1]
                     
-                    # 修复：使用 .keras 扩展名，移除 save_format 参数
                     self.model.save(self.model_path)
                     print(f"💾 模型已保存到: {self.model_path}")
-                    
-                    # 同时保存为 .h5 格式作为兼容
+                    # 同时保存h5
                     self.model.save('model.h5')
                     print(f"💾 模型已保存到: model.h5")
                     
                     self.words_data['training_stats']['last_training'] = datetime.now().isoformat()
                     self.words_data['training_stats']['model_accuracy'] = float(final_acc)
                     self.words_data['training_stats']['model_loss'] = float(final_loss)
-                    self.words_data['training_stats']['total_phrases'] = len(self.corpus)
-                    self.words_data['training_stats']['categories'] = len(self.words_data.get('corpus', {}))
+                    self.words_data['training_stats']['total_phrases'] = total_phrases
+                    self.words_data['training_stats']['categories'] = len(self.corpus)
                     self._save_words()
                     
                     if verbose:
@@ -360,123 +413,31 @@ jobs:
                         print(f"📊 最终准确率: {final_acc:.4f}")
                         print(f"📊 最终损失: {final_loss:.4f}")
                         print("="*70)
-                    
                     return history
                     
-                except ValueError as e:
-                    print(f"⚠️ 准备数据失败: {e}")
-                    print("📝 跳过训练，使用回退方案")
-                    return None
                 except Exception as e:
                     print(f"⚠️ 训练过程中出错: {e}")
                     import traceback
                     traceback.print_exc()
-                    print("📝 使用回退方案（基于规则的生成）")
+                    print("📝 使用规则生成作为回退")
                     return None
             
-            def generate_text(self, seed_text=None, length=20, temperature=0.7):
-                if self.model is None or self.vocab_size == 0:
-                    return random.choice(self.corpus) if self.corpus else "你好世界"
-                
-                try:
-                    if seed_text is None:
-                        seed_text = random.choice(self.corpus)[:self.seq_length] if self.corpus else "你好"
-                    
-                    seed_text = clean_text(seed_text)
-                    if not seed_text:
-                        seed_text = "你好"
-                    
-                    if len(seed_text) < self.seq_length:
-                        padding_char = list(self.char2idx.keys())[0] if self.char2idx else " "
-                        seed_text = seed_text + padding_char * (self.seq_length - len(seed_text))
-                    elif len(seed_text) > self.seq_length:
-                        seed_text = seed_text[:self.seq_length]
-                    
-                    valid_chars = set(self.char2idx.keys())
-                    seed_text = ''.join([c if c in valid_chars else list(valid_chars)[0] for c in seed_text])
-                    
-                    generated = seed_text
-                    
-                    for _ in range(length):
-                        seq = [self.char2idx.get(char, 0) for char in generated[-self.seq_length:]]
-                        seq = tf.one_hot([seq], depth=self.vocab_size)
-                        
-                        predictions = self.model.predict(seq, verbose=0)[0]
-                        
-                        predictions = np.log(predictions + 1e-7) / temperature
-                        exp_preds = np.exp(predictions)
-                        predictions = exp_preds / np.sum(exp_preds)
-                        
-                        next_idx = np.random.choice(range(self.vocab_size), p=predictions)
-                        next_char = self.idx2char[next_idx]
-                        
-                        generated += next_char
-                    
-                    return generated
-                    
-                except Exception as e:
-                    print(f"⚠️ 生成文本时出错: {e}")
-                    return random.choice(self.corpus) if self.corpus else "你好世界"
-            
             def generate_response(self, user_input):
-                user_input = clean_text(user_input)
-                user_lower = user_input.lower()
-                
-                patterns = self.words_data.get('intent_patterns', {})
-                matched_category = None
-                
-                for pattern, category in patterns.items():
-                    if any(keyword in user_lower for keyword in pattern.split('|')):
-                        matched_category = category
-                        break
-                
-                if matched_category and matched_category in self.words_data['corpus']:
-                    phrases = self.words_data['corpus'][matched_category]
-                    if phrases:
-                        response = random.choice(phrases)
-                    else:
-                        response = random.choice(self.corpus) if self.corpus else "你好"
-                else:
-                    try:
-                        response = self.generate_text(
-                            seed_text=user_input[:self.seq_length] if user_input else "你好",
-                            length=15,
-                            temperature=0.7
-                        )
-                        for punct in ['。', '！', '？']:
-                            if punct in response:
-                                response = response.split(punct)[0] + punct
-                                break
-                    except:
-                        response = random.choice(self.corpus) if self.corpus else "你好"
-                
+                # 优先使用规则生成（稳定）
+                response = self.rule_gen.generate_response(user_input)
+                # 如果模型可用，尝试增强（但仅在规则生成太简单时）
+                # 这里暂时直接返回规则生成结果，确保质量
                 return response
             
             def generate_greetings(self, n=6):
-                greetings = []
-                seed_texts = ["你好", "欢迎", "嗨", "您好"]
-                
-                for _ in range(n):
-                    try:
-                        greeting = self.generate_text(
-                            seed_text=random.choice(seed_texts),
-                            length=15,
-                            temperature=random.uniform(0.6, 0.9)
-                        )
-                        if len(greeting) < 5:
-                            greeting = random.choice(self.corpus) if self.corpus else "你好"
-                        greetings.append(greeting)
-                    except:
-                        greetings.append(random.choice(self.corpus) if self.corpus else "你好")
-                
-                return greetings
+                return self.rule_gen.generate_greetings(n)
         
         def main():
             user_message = sys.argv[1] if len(sys.argv) > 1 else "你好Gudao是什么"
             add_phrase = sys.argv[2] if len(sys.argv) > 2 else ""
             epochs = int(sys.argv[3]) if len(sys.argv) > 3 else 30
             
-            print("\n🚀 启动神经网络聊天机器人")
+            print("\n🚀 启动智能助手（混合模式）")
             print("="*70)
             
             bot = NeuralChatBot('words.json')
@@ -485,6 +446,7 @@ jobs:
                 category, phrase = add_phrase.split(':', 1)
                 bot.add_phrase(category.strip(), phrase.strip())
             
+            # 尝试训练（如果样本足够）
             bot.train(epochs=epochs)
             
             print("\n🎉 生成的问候语:")
@@ -504,37 +466,37 @@ jobs:
             print("-"*70)
             
             stats = bot.words_data.get('training_stats', {})
-            print("\n📊 训练统计:")
-            print(f"   - 总词句: {stats.get('total_phrases', 0)} 条")
-            print(f"   - 类别数: {stats.get('categories', 0)} 个")
-            print(f"   - 模型准确率: {stats.get('model_accuracy', 'N/A')}")
-            print(f"   - 模型损失: {stats.get('model_loss', 'N/A')}")
+            print("\n📊 统计:")
+            print(f"   - 语料类别: {len(bot.corpus)} 个")
+            print(f"   - 总词句: {sum(len(v) for v in bot.corpus.values())} 条")
+            if stats.get('model_accuracy'):
+                print(f"   - 模型准确率: {stats['model_accuracy']:.4f}")
+            else:
+                print("   - 模型准确率: 未训练或训练失败")
             
             with open('greetings_output.txt', 'w', encoding='utf-8') as f:
                 f.write("="*70 + "\n")
-                f.write("🧠 神经网络训练结果\n")
+                f.write("🧠 智能助手输出\n")
                 f.write(f"📅 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
                 f.write("="*70 + "\n\n")
-                
                 f.write("🎉 生成的问候语:\n")
                 f.write("-"*70 + "\n")
                 for i, g in enumerate(greetings, 1):
                     f.write(f"{i}. {g}\n")
-                
                 f.write("\n" + "="*70 + "\n")
                 f.write("💬 聊天对话\n")
                 f.write("-"*70 + "\n")
                 f.write(f"👤 用户: {user_message}\n")
                 f.write(f"🤖 AI: {response}\n")
-                
                 f.write("\n" + "="*70 + "\n")
-                f.write("📊 训练统计\n")
+                f.write("📊 统计\n")
                 f.write("-"*70 + "\n")
-                f.write(f"总词句: {stats.get('total_phrases', 0)} 条\n")
-                f.write(f"类别数: {stats.get('categories', 0)} 个\n")
-                f.write(f"模型准确率: {stats.get('model_accuracy', 'N/A')}\n")
-                f.write(f"模型损失: {stats.get('model_loss', 'N/A')}\n")
-                f.write(f"最后训练: {stats.get('last_training', 'N/A')}\n")
+                f.write(f"语料类别: {len(bot.corpus)} 个\n")
+                f.write(f"总词句: {sum(len(v) for v in bot.corpus.values())} 条\n")
+                if stats.get('model_accuracy'):
+                    f.write(f"模型准确率: {stats['model_accuracy']:.4f}\n")
+                else:
+                    f.write("模型准确率: 未训练或训练失败\n")
                 f.write("="*70 + "\n")
             
             print("\n" + "="*70)
@@ -620,22 +582,20 @@ jobs:
         gh release create "$TAG" \
           $RELEASE_FILES \
           --title "🤖 模型发布: $TAG" \
-          --notes "## 🧠 神经网络模型
+          --notes "## 🧠 智能助手发布
           
-          ### 📊 训练统计
+          ### 📊 统计
+          - 语料类别: $(grep -o '"categories": [0-9]*' words.json | head -1 | grep -o '[0-9]*') 个
           - 总词句: $(grep -o '"total_phrases": [0-9]*' words.json | head -1 | grep -o '[0-9]*') 条
-          - 类别数: $(grep -o '"categories": [0-9]*' words.json | head -1 | grep -o '[0-9]*') 个
           - 模型准确率: $(grep -o '"model_accuracy": [0-9.]*' words.json | head -1 | grep -o '[0-9.]*')
-          - 模型损失: $(grep -o '"model_loss": [0-9.]*' words.json | head -1 | grep -o '[0-9.]*')
           
           ### 📅 发布时间
           $(date '+%Y-%m-%d %H:%M:%S')
           
           ### 📁 包含文件
-          $(if [ -f "model.keras" ]; then echo "- \`model.keras\` - 训练好的神经网络模型（Keras 3 格式）"; fi)
-          $(if [ -f "model.h5" ]; then echo "- \`model.h5\` - 训练好的神经网络模型（兼容格式）"; fi)
+          $(if [ -f "model.keras" ]; then echo "- \`model.keras\` - 训练好的神经网络模型"; else echo "- ⚠️ 模型不可用（使用规则生成）"; fi)
           - \`words.json\` - 语料库
-          - \`greetings_output.txt\` - 训练输出结果"
+          - \`greetings_output.txt\` - 输出结果"
           
         echo "✅ Release 创建成功: $TAG"
       env:
@@ -684,13 +644,13 @@ jobs:
     
     - name: Summary output
       run: |
-        echo "## 🧠 神经网络训练完成" >> $GITHUB_STEP_SUMMARY
+        echo "## 🧠 智能助手完成" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "### 💬 测试对话" >> $GITHUB_STEP_SUMMARY
         echo "- 用户: ${{ github.event.inputs.chat_message || '你好Gudao是什么' }}" >> $GITHUB_STEP_SUMMARY
         echo "- AI: ${{ steps.train.outputs.ai_response }}" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "### 📊 训练统计" >> $GITHUB_STEP_SUMMARY
+        echo "### 📊 统计" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         python -c "
         import json
@@ -700,8 +660,6 @@ jobs:
         print(f\"- 总词句: {stats.get('total_phrases', 0)} 条\")
         print(f\"- 类别数: {stats.get('categories', 0)} 个\")
         print(f\"- 模型准确率: {stats.get('model_accuracy', 'N/A')}\")
-        print(f\"- 模型损失: {stats.get('model_loss', 'N/A')}\")
-        print(f\"- 最后训练: {stats.get('last_training', 'N/A')}\")
         " >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "### 📦 Release" >> $GITHUB_STEP_SUMMARY
@@ -713,7 +671,4 @@ jobs:
         echo "- [greetings_output.txt](https://github.com/${{ github.repository }}/blob/main/greetings_output.txt)" >> $GITHUB_STEP_SUMMARY
         if [ -f "model.keras" ]; then
           echo "- [model.keras](https://github.com/${{ github.repository }}/releases/tag/${{ steps.create_release.outputs.TAG }})" >> $GITHUB_STEP_SUMMARY
-        fi
-        if [ -f "model.h5" ]; then
-          echo "- [model.h5](https://github.com/${{ github.repository }}/releases/tag/${{ steps.create_release.outputs.TAG }})" >> $GITHUB_STEP_SUMMARY
         fi
