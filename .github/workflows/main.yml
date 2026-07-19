@@ -1,25 +1,36 @@
-name: Train and Generate Greetings with Chat
+name: Train Neural Network with words.json
 
 on:
   push:
     branches: [ main, master ]
+    paths:
+      - 'words.json'
   schedule:
     - cron: '0 2 * * *'
   workflow_dispatch:
     inputs:
       chat_message:
-        description: '💬 输入聊天消息（例如：帮我生成python打印代码）'
+        description: '💬 输入聊天消息测试'
         required: false
         default: '你好，Gudao是什么？'
         type: string
+      add_phrase:
+        description: '✏️ 添加新词句到语料库（格式：类别:内容）'
+        required: false
+        default: ''
+        type: string
+      epochs:
+        description: '🎯 训练轮数'
+        required: false
+        default: '50'
+        type: number
 
 jobs:
-  train-and-generate:
+  train-neural-network:
     runs-on: ubuntu-latest
     permissions:
       contents: write
       issues: write
-      pull-requests: write
     
     steps:
     - name: Checkout repository
@@ -30,11 +41,521 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.11'
+        python-version: '3.10'  # 使用TensorFlow兼容的版本
     
-    - name: Create greeting generator with chat support
+    - name: Cache pip packages
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+    
+    - name: Create requirements.txt
       run: |
-        cat > greeting_generator.py << 'EOF'
+        cat > requirements.txt << 'EOF'
+        tensorflow>=2.13.0
+        numpy>=1.24.0
+        EOF
+        echo "✅ requirements.txt 已创建"
+    
+    - name: Install neural network libraries
+      run: |
+        echo "📦 开始安装神经网络库..."
+        echo "----------------------------------------"
+        pip install --upgrade pip
+        pip install -r requirements.txt
+        echo "----------------------------------------"
+        echo "✅ 安装完成"
+        python -c "import tensorflow as tf; print(f'TensorFlow 版本: {tf.__version__}')"
+        python -c "import numpy as np; print(f'NumPy 版本: {np.__version__}')"
+    
+    - name: Create neural network training script
+      run: |
+        cat > train_nn.py << 'EOF'
+        import json
+        import os
+        import sys
+        import random
+        import numpy as np
+        import tensorflow as tf
+        from tensorflow import keras
+        from tensorflow.keras import layers
+        from datetime import datetime
+        
+        print("="*70)
+        print("🧠 神经网络训练器")
+        print("="*70)
+        print(f"TensorFlow 版本: {tf.__version__}")
+        print(f"NumPy 版本: {np.__version__}")
+        print("="*70)
+        
+        # ============== 配置 ==============
+        EMBEDDING_DIM = 64
+        LSTM_UNITS = 128
+        BATCH_SIZE = 32
+        
+        # ============== 默认语料库 ==============
+        DEFAULT_WORDS = {
+            "version": "2.0",
+            "created_at": datetime.now().isoformat(),
+            "last_updated": datetime.now().isoformat(),
+            "corpus": {
+                "greetings": [
+                    "你好！😊 很高兴见到你！有什么我可以帮你的吗？",
+                    "你好呀！又见面啦～ 😄",
+                    "嗨！我是DeepSeek，由深度求索公司创造的AI助手。😊",
+                    "欢迎来到我的网站！希望您在这里度过愉快的时光。"
+                ],
+                "python_print": [
+                    "我来为你生成Python打印代码：print('Hello, World!')",
+                    "格式化打印：f'姓名: {name}'",
+                    "不换行打印：print('Hello', end=' ')"
+                ],
+                "gudao_info": [
+                    "Gudao是一个个人网站，网址为gudaoweb.pages.dev",
+                    "Gudao由个人搭建，目前已有多个实用项目"
+                ],
+                "general": [
+                    "人工智能正在改变世界，让我们一起探索未来！",
+                    "今天是个美好的一天，祝您开心！"
+                ]
+            },
+            "intent_patterns": {
+                "打印|print|python打印|代码": "python_print",
+                "gudao|网站|个人网站|gudaoweb": "gudao_info",
+                "你好|嗨|hello|hi|您好": "greetings"
+            },
+            "training_stats": {
+                "total_phrases": 0,
+                "categories": 0,
+                "last_training": None,
+                "model_accuracy": None,
+                "model_loss": None
+            }
+        }
+        
+        class NeuralChatBot:
+            def __init__(self, words_file='words.json'):
+                self.words_file = words_file
+                self.words_data = self._load_or_create_words()
+                self.corpus = self._build_corpus()
+                self.char2idx = {}
+                self.idx2char = {}
+                self.vocab_size = 0
+                self.model = None
+                self.seq_length = 20
+                
+            def _load_or_create_words(self):
+                if os.path.exists(self.words_file):
+                    try:
+                        with open(self.words_file, 'r', encoding='utf-8') as f:
+                            data = json.load(f)
+                        print(f"✅ 加载 words.json: {len(data.get('corpus', {}))} 个类别")
+                        return data
+                    except Exception as e:
+                        print(f"⚠️ 加载失败: {e}, 使用默认语料库")
+                        return DEFAULT_WORDS.copy()
+                else:
+                    print("📝 words.json 不存在，创建默认语料库")
+                    return DEFAULT_WORDS.copy()
+            
+            def _build_corpus(self):
+                corpus = []
+                for category, phrases in self.words_data.get('corpus', {}).items():
+                    corpus.extend(phrases)
+                return corpus
+            
+            def add_phrase(self, category, phrase):
+                if category not in self.words_data['corpus']:
+                    self.words_data['corpus'][category] = []
+                self.words_data['corpus'][category].append(phrase)
+                self.corpus.append(phrase)
+                self.words_data['last_updated'] = datetime.now().isoformat()
+                self._save_words()
+                print(f"✅ 添加词句: [{category}] {phrase[:30]}...")
+            
+            def _save_words(self):
+                with open(self.words_file, 'w', encoding='utf-8') as f:
+                    json.dump(self.words_data, f, ensure_ascii=False, indent=2)
+            
+            def _build_vocab(self):
+                """构建字符级词汇表"""
+                all_text = ''.join(self.corpus)
+                chars = sorted(set(all_text))
+                self.char2idx = {char: idx for idx, char in enumerate(chars)}
+                self.idx2char = {idx: char for char, idx in self.char2idx.items()}
+                self.vocab_size = len(chars)
+                print(f"🔤 词汇表大小: {self.vocab_size} 个字符")
+                return self
+            
+            def _prepare_data(self, seq_length=20):
+                """准备训练数据"""
+                text = ''.join(self.corpus)
+                sequences = []
+                next_chars = []
+                
+                for i in range(0, len(text) - seq_length, 1):
+                    seq = text[i:i+seq_length]
+                    next_char = text[i+seq_length]
+                    sequences.append([self.char2idx[char] for char in seq])
+                    next_chars.append(self.char2idx[next_char])
+                
+                X = np.array(sequences)
+                y = np.array(next_chars)
+                
+                # One-hot编码
+                X_one_hot = tf.one_hot(X, depth=self.vocab_size)
+                y_one_hot = tf.one_hot(y, depth=self.vocab_size)
+                
+                print(f"📊 训练样本数: {len(X)}")
+                print(f"📐 输入形状: {X_one_hot.shape}")
+                
+                return X_one_hot, y_one_hot
+            
+            def build_model(self):
+                """构建LSTM神经网络"""
+                self._build_vocab()
+                
+                model = keras.Sequential([
+                    layers.LSTM(LSTM_UNITS, 
+                                input_shape=(self.seq_length, self.vocab_size),
+                                return_sequences=True,
+                                dropout=0.2),
+                    layers.LSTM(LSTM_UNITS // 2,
+                                dropout=0.2),
+                    layers.Dense(self.vocab_size, activation='softmax')
+                ])
+                
+                model.compile(
+                    optimizer=keras.optimizers.Adam(learning_rate=0.01),
+                    loss='categorical_crossentropy',
+                    metrics=['accuracy']
+                )
+                
+                print("\n🧠 模型架构:")
+                print(model.summary())
+                
+                self.model = model
+                return model
+            
+            def train(self, epochs=100, verbose=True):
+                """训练神经网络"""
+                if verbose:
+                    print("\n" + "="*70)
+                    print("🚀 开始训练神经网络")
+                    print("="*70)
+                    print(f"📚 语料库: {len(self.corpus)} 条词句")
+                    print(f"📂 类别数: {len(self.words_data.get('corpus', {}))} 个")
+                    print(f"🔄 训练轮数: {epochs}")
+                    print("-"*70)
+                
+                # 准备数据
+                X_train, y_train = self._prepare_data(self.seq_length)
+                
+                # 构建模型
+                if self.model is None:
+                    self.build_model()
+                
+                # 回调
+                callbacks = [
+                    keras.callbacks.EarlyStopping(patience=10, restore_best_weights=True),
+                    keras.callbacks.ReduceLROnPlateau(factor=0.5, patience=5)
+                ]
+                
+                # 训练
+                history = self.model.fit(
+                    X_train, y_train,
+                    epochs=epochs,
+                    batch_size=BATCH_SIZE,
+                    validation_split=0.1,
+                    verbose=1 if verbose else 0,
+                    callbacks=callbacks
+                )
+                
+                # 更新统计
+                final_acc = history.history['accuracy'][-1]
+                final_loss = history.history['loss'][-1]
+                
+                self.words_data['training_stats']['last_training'] = datetime.now().isoformat()
+                self.words_data['training_stats']['model_accuracy'] = float(final_acc)
+                self.words_data['training_stats']['model_loss'] = float(final_loss)
+                self.words_data['training_stats']['total_phrases'] = len(self.corpus)
+                self.words_data['training_stats']['categories'] = len(self.words_data.get('corpus', {}))
+                self._save_words()
+                
+                if verbose:
+                    print("-"*70)
+                    print("✅ 训练完成！")
+                    print(f"📊 最终准确率: {final_acc:.4f}")
+                    print(f"📊 最终损失: {final_loss:.4f}")
+                    print("="*70)
+                
+                return history
+            
+            def generate_text(self, seed_text=None, length=30, temperature=0.7):
+                """生成文本"""
+                if self.model is None:
+                    return random.choice(self.corpus)
+                
+                if seed_text is None:
+                    seed_text = random.choice(self.corpus)[:self.seq_length]
+                
+                if len(seed_text) < self.seq_length:
+                    seed_text = seed_text.ljust(self.seq_length)
+                elif len(seed_text) > self.seq_length:
+                    seed_text = seed_text[:self.seq_length]
+                
+                generated = seed_text
+                
+                for _ in range(length):
+                    seq = [self.char2idx.get(char, 0) for char in generated[-self.seq_length:]]
+                    seq = tf.one_hot([seq], depth=self.vocab_size)
+                    
+                    predictions = self.model.predict(seq, verbose=0)[0]
+                    
+                    # 温度采样
+                    predictions = np.log(predictions + 1e-7) / temperature
+                    exp_preds = np.exp(predictions)
+                    predictions = exp_preds / np.sum(exp_preds)
+                    
+                    next_idx = np.random.choice(range(self.vocab_size), p=predictions)
+                    next_char = self.idx2char[next_idx]
+                    
+                    generated += next_char
+                
+                return generated
+            
+            def generate_response(self, user_input):
+                """生成回复"""
+                user_lower = user_input.lower()
+                
+                # 匹配意图
+                patterns = self.words_data.get('intent_patterns', {})
+                matched_category = None
+                
+                for pattern, category in patterns.items():
+                    if any(keyword in user_lower for keyword in pattern.split('|')):
+                        matched_category = category
+                        break
+                
+                if matched_category and matched_category in self.words_data['corpus']:
+                    phrases = self.words_data['corpus'][matched_category]
+                    response = random.choice(phrases)
+                else:
+                    # 使用神经网络生成
+                    try:
+                        response = self.generate_text(
+                            seed_text=user_input[:self.seq_length],
+                            length=30,
+                            temperature=0.7
+                        )
+                        # 清理生成文本
+                        for punct in ['。', '！', '？', '.', '!', '?']:
+                            if punct in response:
+                                response = response.split(punct)[0] + punct
+                                break
+                    except:
+                        response = random.choice(self.corpus)
+                
+                # 添加表情
+                emojis = [" 😊", " 😄", " 🌟", " ✨", " 🚀", " 💻", " 🎉", ""]
+                if random.random() > 0.3:
+                    response = response + random.choice(emojis)
+                
+                return response
+            
+            def generate_greetings(self, n=6):
+                """生成问候语"""
+                greetings = []
+                for _ in range(n):
+                    try:
+                        greeting = self.generate_text(
+                            seed_text=random.choice(["你好", "欢迎", "嗨", "您好"]),
+                            length=25,
+                            temperature=random.uniform(0.6, 0.9)
+                        )
+                        # 清理
+                        for punct in ['。', '！', '？']:
+                            if punct in greeting:
+                                greeting = greeting.split(punct)[0] + punct
+                                break
+                        greetings.append(greeting)
+                    except:
+                        greetings.append(random.choice(self.corpus))
+                
+                return greetings
+        
+        def main():
+            # 获取参数
+            user_message = sys.argv[1] if len(sys.argv) > 1 else "你好，Gudao是什么？"
+            add_phrase = sys.argv[2] if len(sys.argv) > 2 else ""
+            epochs = int(sys.argv[3]) if len(sys.argv) > 3 else 50
+            
+            print("\n🚀 启动神经网络聊天机器人")
+            print("="*70)
+            
+            # 初始化
+            bot = NeuralChatBot('words.json')
+            
+            # 添加词句
+            if add_phrase and ':' in add_phrase:
+                category, phrase = add_phrase.split(':', 1)
+                bot.add_phrase(category.strip(), phrase.strip())
+            
+            # 训练
+            bot.train(epochs=epochs)
+            
+            # 生成问候语
+            print("\n🎉 生成的问候语:")
+            print("-"*70)
+            greetings = bot.generate_greetings(n=6)
+            for i, g in enumerate(greetings, 1):
+                print(f"📝 {i}: {g}")
+            
+            print("-"*70)
+            
+            # 聊天
+            print("\n💬 聊天对话:")
+            print("-"*70)
+            response = bot.generate_response(user_message)
+            print(f"👤 用户: {user_message}")
+            print(f"🤖 AI: {response}")
+            
+            print("-"*70)
+            
+            # 统计
+            stats = bot.words_data.get('training_stats', {})
+            print("\n📊 训练统计:")
+            print(f"   - 总词句: {stats.get('total_phrases', 0)} 条")
+            print(f"   - 类别数: {stats.get('categories', 0)} 个")
+            print(f"   - 模型准确率: {stats.get('model_accuracy', 'N/A')}")
+            print(f"   - 模型损失: {stats.get('model_loss', 'N/A')}")
+            
+            # 保存
+            with open('greetings_output.txt', 'w', encoding='utf-8') as f:
+                f.write("="*70 + "\n")
+                f.write("🧠 神经网络训练结果\n")
+                f.write(f"📅 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write("="*70 + "\n\n")
+                
+                f.write("🎉 生成的问候语:\n")
+                f.write("-"*70 + "\n")
+                for i, g in enumerate(greetings, 1):
+                    f.write(f"{i}. {g}\n")
+                
+                f.write("\n" + "="*70 + "\n")
+                f.write("💬 聊天对话\n")
+                f.write("-"*70 + "\n")
+                f.write(f"👤 用户: {user_message}\n")
+                f.write(f"🤖 AI: {response}\n")
+                
+                f.write("\n" + "="*70 + "\n")
+                f.write("📊 训练统计\n")
+                f.write("-"*70 + "\n")
+                f.write(f"总词句: {stats.get('total_phrases', 0)} 条\n")
+                f.write(f"类别数: {stats.get('categories', 0)} 个\n")
+                f.write(f"模型准确率: {stats.get('model_accuracy', 'N/A')}\n")
+                f.write(f"模型损失: {stats.get('model_loss', 'N/A')}\n")
+                f.write(f"最后训练: {stats.get('last_training', 'N/A')}\n")
+                f.write("="*70 + "\n")
+            
+            print("\n" + "="*70)
+            print("✅ 完成！")
+            print("="*70)
+        
+        if __name__ == "__main__":
+            main()
+        EOF
+        echo "✅ 神经网络训练脚本已创建"
+    
+    - name: Run neural network training
+      id: train
+      run: |
+        # 获取参数
+        if [ -n "${{ github.event.inputs.chat_message }}" ]; then
+          CHAT_MSG="${{ github.event.inputs.chat_message }}"
+        else
+          CHAT_MSG="你好，Gudao是什么？"
+        fi
+        
+        ADD_PHRASE="${{ github.event.inputs.add_phrase }}"
+        EPOCHS="${{ github.event.inputs.epochs || 50 }}"
+        
+        echo "💬 用户消息: $CHAT_MSG"
+        echo "🎯 训练轮数: $EPOCHS"
+        
+        if [ -n "$ADD_PHRASE" ]; then
+          echo "✏️ 添加词句: $ADD_PHRASE"
+          python train_nn.py "$CHAT_MSG" "$ADD_PHRASE" "$EPOCHS"
+        else
+          python train_nn.py "$CHAT_MSG" "" "$EPOCHS"
+        fi
+        
+        # 提取AI回复
+        AI_RESPONSE=$(grep "🤖 AI:" greetings_output.txt | head -1 | sed 's/🤖 AI: //')
+        echo "ai_response=$AI_RESPONSE" >> $GITHUB_OUTPUT
+        echo "✅ 训练完成"
+    
+    - name: Display results
+      run: |
+        echo "📄 训练结果："
+        echo "-------------------"
+        cat greetings_output.txt
+        echo "-------------------"
+        echo ""
+        echo "📊 words.json 内容预览："
+        echo "-------------------"
+        head -80 words.json
+    
+    - name: Commit and push changes
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git remote set-url origin https://x-access-token:${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}
+        git add words.json greetings_output.txt
+        if ! git diff --staged --quiet; then
+          git commit -m "🧠 Neural network training with words.json [skip ci]"
+          git push
+          echo "✅ 文件已提交并推送"
+        else
+          echo "✅ 没有新的更改需要提交"
+        fi
+    
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: neural-network-results
+        path: |
+          words.json
+          greetings_output.txt
+        retention-days: 30
+    
+    - name: Summary output
+      run: |
+        echo "## 🧠 神经网络训练完成" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 💬 测试对话" >> $GITHUB_STEP_SUMMARY
+        echo "- 用户: ${{ github.event.inputs.chat_message || '你好，Gudao是什么？' }}" >> $GITHUB_STEP_SUMMARY
+        echo "- AI: ${{ steps.train.outputs.ai_response }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 📊 训练统计" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        python -c "
+        import json
+        with open('words.json', 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        stats = data.get('training_stats', {})
+        print(f\"- 总词句: {stats.get('total_phrases', 0)} 条\")
+        print(f\"- 类别数: {stats.get('categories', 0)} 个\")
+        print(f\"- 模型准确率: {stats.get('model_accuracy', 'N/A')}\")
+        print(f\"- 模型损失: {stats.get('model_loss', 'N/A')}\")
+        print(f\"- 最后训练: {stats.get('last_training', 'N/A')}\")
+        " >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 📁 文件链接" >> $GITHUB_STEP_SUMMARY
+        echo "- [words.json](https://github.com/${{ github.repository }}/blob/main/words.json)" >> $GITHUB_STEP_SUMMARY
+        echo "- [greetings_output.txt](https://github.com/${{ github.repository }}/blob/main/greetings_output.txt)" >> $GITHUB_STEP_SUMMARY        cat > greeting_generator.py << 'EOF'
         import random
         import re
         import json
