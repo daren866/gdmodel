@@ -66,10 +66,10 @@
     "AI发展趋势|AI展望|AI未来|AI前景|AI进步|人工智能发展": "ai_future"
   },
   "training_stats": {
-    "total_phrases": 30,
+    "total_phrases": 39,
     "categories": 7,
-    "last_training": null,
-    "model_accuracy": null,
-    "model_loss": null
+    "last_training": "2026-07-19T09:11:24.197882",
+    "model_accuracy": 0.08122362941503525,
+    "model_loss": 4.6993088722229
   }
 }
