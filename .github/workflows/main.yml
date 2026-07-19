@@ -303,12 +303,11 @@ jobs:
                         keras.callbacks.ReduceLROnPlateau(factor=0.5, patience=5)
                     ]
                     
-                    # 修复：安全计算 validation_split
                     num_samples = len(X_train)
                     if num_samples > 10:
                         val_split = min(0.1, 1 - 1/num_samples)
                     else:
-                        val_split = 0.0  # 样本太少，不使用验证集
+                        val_split = 0.0
                     
                     print(f"📊 训练样本数: {num_samples}, 验证集比例: {val_split:.2f}")
                     
@@ -324,6 +323,7 @@ jobs:
                     final_acc = history.history['accuracy'][-1]
                     final_loss = history.history['loss'][-1]
                     
+                    # 保存模型
                     self.model.save(self.model_path)
                     print(f"💾 模型已保存到: {self.model_path}")
                     
@@ -561,7 +561,12 @@ jobs:
         echo ""
         echo "📦 模型文件："
         echo "-------------------"
-        ls -lh model.h5 2>/dev/null || echo "模型文件未找到"
+        if [ -f "model.h5" ]; then
+          ls -lh model.h5
+          echo "✅ 模型文件存在"
+        else
+          echo "⚠️ 模型文件不存在（训练可能使用了回退方案）"
+        fi
     
     - name: Create Release
       id: create_release
@@ -574,10 +579,17 @@ jobs:
         
         echo "TAG=$TAG" >> $GITHUB_OUTPUT
         
+        # 构建 Release 文件列表
+        RELEASE_FILES="words.json greetings_output.txt"
+        if [ -f "model.h5" ]; then
+          RELEASE_FILES="$RELEASE_FILES model.h5"
+          echo "✅ 包含模型文件 model.h5"
+        else
+          echo "⚠️ model.h5 不存在，跳过"
+        fi
+        
         gh release create "$TAG" \
-          model.h5 \
-          words.json \
-          greetings_output.txt \
+          $RELEASE_FILES \
           --title "🤖 模型发布: $TAG" \
           --notes "## 🧠 神经网络模型
           
@@ -588,7 +600,12 @@ jobs:
           - 模型损失: $(grep -o '"model_loss": [0-9.]*' words.json | head -1 | grep -o '[0-9.]*')
           
           ### 📅 发布时间
-          $(date '+%Y-%m-%d %H:%M:%S')"
+          $(date '+%Y-%m-%d %H:%M:%S')
+          
+          ### 📁 包含文件
+          $(if [ -f "model.h5" ]; then echo "- \`model.h5\` - 训练好的神经网络模型"; else echo "- ⚠️ 模型文件不可用（训练使用回退方案）"; fi)
+          - \`words.json\` - 语料库
+          - \`greetings_output.txt\` - 训练输出结果"
           
         echo "✅ Release 创建成功: $TAG"
       env:
@@ -600,7 +617,11 @@ jobs:
         git config --local user.name "GitHub Action"
         git remote set-url origin https://x-access-token:${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}
         
-        git add words.json greetings_output.txt model.h5 2>/dev/null || true
+        # 只添加存在的文件
+        git add words.json greetings_output.txt 2>/dev/null || true
+        if [ -f "model.h5" ]; then
+          git add model.h5
+        fi
         
         if ! git diff --staged --quiet; then
           git commit -m "🧠 Neural network training with words.json [skip ci]"
@@ -626,6 +647,7 @@ jobs:
           greetings_output.txt
           model.h5
         retention-days: 30
+        if-no-files-found: warn
     
     - name: Summary output
       run: |
@@ -656,4 +678,8 @@ jobs:
         echo "### 📁 文件链接" >> $GITHUB_STEP_SUMMARY
         echo "- [words.json](https://github.com/${{ github.repository }}/blob/main/words.json)" >> $GITHUB_STEP_SUMMARY
         echo "- [greetings_output.txt](https://github.com/${{ github.repository }}/blob/main/greetings_output.txt)" >> $GITHUB_STEP_SUMMARY
-        echo "- [model.h5](https://github.com/${{ github.repository }}/releases/tag/${{ steps.create_release.outputs.TAG }})" >> $GITHUB_STEP_SUMMARY
+        if [ -f "model.h5" ]; then
+          echo "- [model.h5](https://github.com/${{ github.repository }}/releases/tag/${{ steps.create_release.outputs.TAG }})" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "- ⚠️ model.h5 未生成" >> $GITHUB_STEP_SUMMARY
+        fi
