@@ -164,8 +164,8 @@ jobs:
                 self.vocab_size = 0
                 self.model = None
                 self.seq_length = 15
-                self.model_path = 'model.h5'
-                
+                self.model_path = 'model.bin'
+            
             def _load_or_create_words(self):
                 if os.path.exists(self.words_file):
                     try:
@@ -226,6 +226,16 @@ jobs:
                 
                 valid_chars = set(self.char2idx.keys())
                 filtered_text = ''.join([c for c in text if c in valid_chars])
+                
+                # 修复：如果 filtered_text 为空，使用默认文本
+                if not filtered_text:
+                    print("⚠️ filtered_text 为空，使用默认文本")
+                    filtered_text = "你好世界"
+                    # 重新构建词汇表
+                    chars = sorted(set(filtered_text))
+                    self.char2idx = {char: idx for idx, char in enumerate(chars)}
+                    self.idx2char = {idx: char for char, idx in self.char2idx.items()}
+                    self.vocab_size = len(chars)
                 
                 if len(filtered_text) < seq_length + 1:
                     repeat_times = (seq_length + 1) // len(filtered_text) + 1
@@ -323,8 +333,8 @@ jobs:
                     final_acc = history.history['accuracy'][-1]
                     final_loss = history.history['loss'][-1]
                     
-                    # 保存模型
-                    self.model.save(self.model_path)
+                    # 保存模型为 .bin 格式
+                    self.model.save(self.model_path, save_format='tf')
                     print(f"💾 模型已保存到: {self.model_path}")
                     
                     self.words_data['training_stats']['last_training'] = datetime.now().isoformat()
@@ -561,11 +571,11 @@ jobs:
         echo ""
         echo "📦 模型文件："
         echo "-------------------"
-        if [ -f "model.h5" ]; then
-          ls -lh model.h5
-          echo "✅ 模型文件存在"
+        if [ -f "model.bin" ]; then
+          ls -lh model.bin
+          echo "✅ model.bin 存在"
         else
-          echo "⚠️ 模型文件不存在（训练可能使用了回退方案）"
+          echo "⚠️ model.bin 不存在"
         fi
     
     - name: Create Release
@@ -579,13 +589,10 @@ jobs:
         
         echo "TAG=$TAG" >> $GITHUB_OUTPUT
         
-        # 构建 Release 文件列表
         RELEASE_FILES="words.json greetings_output.txt"
-        if [ -f "model.h5" ]; then
-          RELEASE_FILES="$RELEASE_FILES model.h5"
-          echo "✅ 包含模型文件 model.h5"
-        else
-          echo "⚠️ model.h5 不存在，跳过"
+        if [ -f "model.bin" ]; then
+          RELEASE_FILES="$RELEASE_FILES model.bin"
+          echo "✅ 包含模型文件 model.bin"
         fi
         
         gh release create "$TAG" \
@@ -603,7 +610,7 @@ jobs:
           $(date '+%Y-%m-%d %H:%M:%S')
           
           ### 📁 包含文件
-          $(if [ -f "model.h5" ]; then echo "- \`model.h5\` - 训练好的神经网络模型"; else echo "- ⚠️ 模型文件不可用（训练使用回退方案）"; fi)
+          $(if [ -f "model.bin" ]; then echo "- \`model.bin\` - 训练好的神经网络模型"; else echo "- ⚠️ 模型文件不可用"; fi)
           - \`words.json\` - 语料库
           - \`greetings_output.txt\` - 训练输出结果"
           
@@ -617,10 +624,9 @@ jobs:
         git config --local user.name "GitHub Action"
         git remote set-url origin https://x-access-token:${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}
         
-        # 只添加存在的文件
         git add words.json greetings_output.txt 2>/dev/null || true
-        if [ -f "model.h5" ]; then
-          git add model.h5
+        if [ -f "model.bin" ]; then
+          git add model.bin
         fi
         
         if ! git diff --staged --quiet; then
@@ -645,7 +651,7 @@ jobs:
         path: |
           words.json
           greetings_output.txt
-          model.h5
+          model.bin
         retention-days: 30
         if-no-files-found: warn
     
@@ -678,8 +684,6 @@ jobs:
         echo "### 📁 文件链接" >> $GITHUB_STEP_SUMMARY
         echo "- [words.json](https://github.com/${{ github.repository }}/blob/main/words.json)" >> $GITHUB_STEP_SUMMARY
         echo "- [greetings_output.txt](https://github.com/${{ github.repository }}/blob/main/greetings_output.txt)" >> $GITHUB_STEP_SUMMARY
-        if [ -f "model.h5" ]; then
-          echo "- [model.h5](https://github.com/${{ github.repository }}/releases/tag/${{ steps.create_release.outputs.TAG }})" >> $GITHUB_STEP_SUMMARY
-        else
-          echo "- ⚠️ model.h5 未生成" >> $GITHUB_STEP_SUMMARY
+        if [ -f "model.bin" ]; then
+          echo "- [model.bin](https://github.com/${{ github.repository }}/releases/tag/${{ steps.create_release.outputs.TAG }})" >> $GITHUB_STEP_SUMMARY
         fi
