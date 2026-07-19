@@ -11,7 +11,7 @@ jobs:
   train-and-generate:
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # 明确赋予写入权限
+      contents: write
     
     steps:
     - name: Checkout repository
@@ -35,6 +35,7 @@ jobs:
         
         # ============== 语料库 ==============
         CORPUS = [
+            # 原始问候语
             "你好！😊 很高兴见到你！有什么我可以帮你的吗？无论是回答问题、聊天，还是需要一些建议，我都很乐意协助。尽管开口吧！",
             "你好呀！又见面啦～ 😄",
             "西瓜是一种非常受欢迎的夏季水果，学名Citrullus lanatus，属于葫芦科植物。它原产于非洲，现在世界各地都有种植。",
@@ -44,15 +45,38 @@ jobs:
             "人工智能正在改变世界，让我们一起探索未来！",
             "天气真好，心情也格外愉快。",
             "今天是个美好的一天，祝您开心！",
-            "有什么问题尽管问我，我会尽力帮您解答。"
+            "有什么问题尽管问我，我会尽力帮您解答。",
+            
+            # Python打印代码示例
+            "我来为你生成几种常见的Python打印代码示例：基础打印：print('Hello, World!')；格式化打印：f-string用 f'姓名: {name}'；不换行打印用 end=' '；打印到文件用 file=f；打印表格用 f'{name:<10}' 格式化；彩色打印用 ANSI 代码 \\033[颜色m文字\\033[0m；进度条用 \\r 实现动态刷新。",
+            
+            # Gudao网站介绍
+            "Gudao是一个由个人搭建的小型个人网站，网址为gudaoweb.pages.dev，截止目前2026年7月，已包含多种项目和工具。",
+            
+            # 扩展变体
+            "如果你需要Python打印代码，我可以帮你生成基础打印、格式化打印、表格打印等多种示例。",
+            "关于Gudao，它是一个个人网站，包含多个实用项目和工具。",
+            "Python打印有很多技巧，包括f-string、format()、彩色输出和进度条等。",
+            "Gudao网站目前正在不断发展，未来会添加更多功能。",
+            "打印代码可以帮助你更好地调试和展示程序输出。"
         ]
         
         class GreetingGenerator:
             def __init__(self):
                 self.corpus = CORPUS
-                self.prefixes = ["哦，", "嗯，", "好的，", "是的，", "对了，", "其实，", "当然，", "没错，", "哈哈，", "嗨，", "您好，"]
-                self.suffixes = [" 祝您开心！", " 有什么我可以帮您的吗？", " 随时为您服务！", " 很高兴为您服务！", " 希望您喜欢！", " 期待与您交流！", " 祝您一天愉快！"]
-                self.emojis = ["😊", "😄", "🌟", "✨", "🎉", "💫", "🎈", "❤️", "🔥", "🌈", ""]
+                self.prefixes = [
+                    "哦，", "嗯，", "好的，", "是的，", "对了，", 
+                    "其实，", "当然，", "没错，", "哈哈，", "嗨，", 
+                    "您好，", "关于这个问题，", "说到这个，", "我理解，"
+                ]
+                self.suffixes = [
+                    " 祝您开心！", " 有什么我可以帮您的吗？", " 随时为您服务！",
+                    " 很高兴为您服务！", " 希望您喜欢！", " 期待与您交流！",
+                    " 祝您一天愉快！", " 需要帮忙随时说！", " 很高兴认识您！",
+                    " 这个答案对您有帮助吗？", " 欢迎继续提问！", " 祝您编程愉快！"
+                ]
+                self.emojis = ["😊", "😄", "🌟", "✨", "🎉", "💫", "🎈", "❤️", "🔥", "🌈", "💻", "🐍", "🚀", ""]
+                self.history = []
             
             def _simulate_epoch(self, epoch, total):
                 loss = 4.0 * (0.95 ** epoch) + random.uniform(-0.05, 0.05)
@@ -60,12 +84,13 @@ jobs:
                 accuracy = min(0.98, 0.1 + 0.88 * (1 - 0.96 ** epoch))
                 return loss, accuracy
             
-            def train(self, epochs=50, verbose=True):
+            def train(self, epochs=100, verbose=True):
                 if verbose:
                     print("="*70)
-                    print("🤖 训练问候语生成器")
+                    print("🤖 训练智能问候语生成器")
                     print("="*70)
-                    print(f"📚 语料库: {len(self.corpus)} 条")
+                    print(f"📚 语料库大小: {len(self.corpus)} 条")
+                    print(f"📝 总字符数: {sum(len(text) for text in self.corpus)}")
                     print(f"🔄 训练轮数: {epochs}")
                     print("-"*70)
                 
@@ -85,7 +110,7 @@ jobs:
                     base = random.choice(self.corpus)
                     prefix = random.choice(self.prefixes) if random.random() > 0.3 else ""
                     suffix = random.choice(self.suffixes) if random.random() > 0.3 else ""
-                    emoji = random.choice(self.emojis)
+                    emoji = random.choice(self.emojis) if random.random() > 0.2 else ""
                     
                     greeting = prefix + base + suffix
                     if emoji:
@@ -93,25 +118,65 @@ jobs:
                     
                     greeting = re.sub(r'[！？。]+', lambda m: m.group(0)[0], greeting)
                     greetings.append(greeting)
+                    self.history.append(greeting)
                 
                 return greetings
+            
+            def generate_response(self, user_input=""):
+                if "打印" in user_input or "print" in user_input.lower():
+                    responses = [
+                        "我可以帮你生成Python打印代码！基础用法：print('Hello')，格式化：f'姓名: {name}'，表格打印用 f'{name:<10}'。",
+                        "Python打印有很多方式：用 f-string 格式化，用 print(..., end=' ') 不换行，用 print(..., file=f) 写入文件。",
+                        "需要彩色打印吗？可以用 ANSI 转义码，或者安装 colorama 库。"
+                    ]
+                    return random.choice(responses) + " 😊"
+                elif "gudao" in user_input.lower() or "网站" in user_input:
+                    responses = [
+                        "Gudao是一个个人网站，网址是 gudaoweb.pages.dev，包含多种项目和工具。",
+                        "Gudao由个人搭建，目前已有多个实用项目，欢迎访问！",
+                        "关于Gudao，它是一个不断发展的个人网站，您可以访问 gudaoweb.pages.dev 了解更多。"
+                    ]
+                    return random.choice(responses) + " 🚀"
+                else:
+                    return random.choice(self.generate(n=1))
         
         def main():
-            print("\n🚀 启动问候语生成器")
+            print("\n🚀 启动智能问候语生成器")
+            print("="*70)
+            print("📌 新语料已包含：")
+            print("   - Python打印代码示例")
+            print("   - Gudao网站介绍")
             print("="*70)
             
             generator = GreetingGenerator()
-            generator.train(epochs=50)
+            generator.train(epochs=100)
             
             print("\n🎉 生成的问候语:")
             print("-"*70)
-            greetings = generator.generate(n=5)
+            greetings = generator.generate(n=6)
             for i, g in enumerate(greetings, 1):
                 print(f"📝 {i}: {g}")
             
             print("-"*70)
             
-            # 保存到文件
+            print("\n🧪 场景测试:")
+            print("-"*70)
+            test_inputs = [
+                "帮我生成python的打印代码",
+                "Gudao是什么？",
+                "你好啊"
+            ]
+            test_results = []
+            for user_input in test_inputs:
+                response = generator.generate_response(user_input)
+                test_results.append({'user': user_input, 'ai': response})
+                print(f"👤 用户: {user_input}")
+                print(f"🤖 AI: {response}")
+                print()
+            
+            print("-"*70)
+            print("💾 保存结果...")
+            
             with open('greetings_output.txt', 'w', encoding='utf-8') as f:
                 f.write("="*70 + "\n")
                 f.write("🎉 生成的问候语\n")
@@ -119,24 +184,37 @@ jobs:
                 f.write("="*70 + "\n\n")
                 for i, g in enumerate(greetings, 1):
                     f.write(f"{i}. {g}\n")
+                
                 f.write("\n" + "="*70 + "\n")
+                f.write("🧪 场景测试结果\n")
+                f.write("="*70 + "\n\n")
+                for result in test_results:
+                    f.write(f"👤 用户: {result['user']}\n")
+                    f.write(f"🤖 AI: {result['ai']}\n\n")
+                
+                f.write("="*70 + "\n")
                 f.write(f"📊 统计: 语料库 {len(CORPUS)} 条\n")
                 f.write("="*70 + "\n")
             
             output_data = {
                 'timestamp': datetime.now().isoformat(),
                 'greetings': greetings,
-                'corpus_size': len(CORPUS)
+                'corpus_size': len(CORPUS),
+                'test_scenarios': test_results
             }
             
             with open('greetings_output.json', 'w', encoding='utf-8') as f:
                 json.dump(output_data, f, ensure_ascii=False, indent=2)
             
-            print("\n💾 文件已保存")
+            print("✅ 文件已保存:")
+            print("   - greetings_output.txt")
+            print("   - greetings_output.json")
+            
             print("\n" + "="*70)
-            print("✅ 测试输出:")
+            print("✅ 测试输出 '你好' 问候语:")
             print(f"   {greetings[0]}")
             print("="*70)
+            print("\n🎊 运行完成！")
         
         if __name__ == "__main__":
             main()
@@ -154,16 +232,18 @@ jobs:
         echo "-------------------"
         cat greetings_output.txt
         echo "-------------------"
+        echo ""
+        echo "📊 JSON格式："
+        cat greetings_output.json
     
     - name: Commit and push changes
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
-        # 使用正确的URL格式
         git remote set-url origin https://x-access-token:${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}
         git add greetings_output.txt greetings_output.json
         if ! git diff --staged --quiet; then
-          git commit -m "🤖 Auto-generate greetings [skip ci]"
+          git commit -m "🤖 Auto-generate greetings with Python printing and Gudao info [skip ci]"
           git push
           echo "✅ 文件已提交并推送"
         else
@@ -191,6 +271,13 @@ jobs:
           fi
         done < greetings_output.txt
         echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 🧪 场景测试：" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "| 用户输入 | AI 回复 |" >> $GITHUB_STEP_SUMMARY
+        echo "|----------|---------|" >> $GITHUB_STEP_SUMMARY
+        grep -A1 "👤 用户" greetings_output.txt | grep -v "^-" | sed 's/👤 用户: /| /' | sed 's/🤖 AI: /| /' | sed 's/$/ |/' >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
         echo "### 📊 统计信息：" >> $GITHUB_STEP_SUMMARY
-        echo "- 语料库大小: 10 条" >> $GITHUB_STEP_SUMMARY
+        echo "- 语料库大小: 15 条" >> $GITHUB_STEP_SUMMARY
         echo "- 生成时间: $(date '+%Y-%m-%d %H:%M:%S')" >> $GITHUB_STEP_SUMMARY
+        echo "- 查看详情: [greetings_output.txt](https://github.com/${{ github.repository }}/blob/main/greetings_output.txt)" >> $GITHUB_STEP_SUMMARY
