@@ -22,7 +22,7 @@ on:
       epochs:
         description: '🎯 训练轮数'
         required: false
-        default: '50'
+        default: '30'
         type: number
 
 jobs:
@@ -91,35 +91,34 @@ jobs:
         print("="*70)
         
         # ============== 配置 ==============
-        EMBEDDING_DIM = 64
         LSTM_UNITS = 128
         BATCH_SIZE = 32
         
-        # ============== 默认语料库 ==============
+        # ============== 默认语料库（去除所有特殊字符） ==============
         DEFAULT_WORDS = {
             "version": "2.0",
             "created_at": datetime.now().isoformat(),
             "last_updated": datetime.now().isoformat(),
             "corpus": {
                 "greetings": [
-                    "你好！很高兴见到你！有什么我可以帮你的吗？",
-                    "你好呀！又见面啦！",
-                    "嗨！我是DeepSeek，由深度求索公司创造的AI助手。",
-                    "欢迎来到我的网站！希望您在这里度过愉快的时光。",
-                    "您好！请问今天有什么可以帮助您的呢？"
+                    "你好很高兴见到你有什么我可以帮你的吗",
+                    "你好呀又见面啦",
+                    "嗨我是DeepSeek由深度求索公司创造的AI助手",
+                    "欢迎来到我的网站希望您在这里度过愉快的时光",
+                    "您好请问今天有什么可以帮助您的呢"
                 ],
                 "python_print": [
-                    "我来为你生成Python打印代码：print('Hello, World!')",
-                    "格式化打印：f'姓名: {name}'",
-                    "不换行打印：print('Hello', end=' ')"
+                    "我来为你生成Python打印代码printHelloWorld",
+                    "格式化打印f姓名name",
+                    "不换行打印printHelloend"
                 ],
                 "gudao_info": [
-                    "Gudao是一个个人网站，网址为gudaoweb.pages.dev",
-                    "Gudao由个人搭建，目前已有多个实用项目"
+                    "Gudao是一个个人网站网址为gudaowebpagesdev",
+                    "Gudao由个人搭建目前已有多个实用项目"
                 ],
                 "general": [
-                    "人工智能正在改变世界，让我们一起探索未来！",
-                    "今天是个美好的一天，祝您开心！"
+                    "人工智能正在改变世界让我们一起探索未来",
+                    "今天是个美好的一天祝您开心"
                 ]
             },
             "intent_patterns": {
@@ -136,6 +135,13 @@ jobs:
             }
         }
         
+        def clean_text(text):
+            """清理文本，只保留中文字符、字母和数字"""
+            import re
+            # 保留中文、字母、数字、常用标点
+            cleaned = re.sub(r'[^\u4e00-\u9fa5a-zA-Z0-9，。！？、：；""''（）\n]', '', text)
+            return cleaned
+        
         class NeuralChatBot:
             def __init__(self, words_file='words.json'):
                 self.words_file = words_file
@@ -145,7 +151,7 @@ jobs:
                 self.idx2char = {}
                 self.vocab_size = 0
                 self.model = None
-                self.seq_length = 20
+                self.seq_length = 15
                 
             def _load_or_create_words(self):
                 if os.path.exists(self.words_file):
@@ -164,28 +170,37 @@ jobs:
             def _build_corpus(self):
                 corpus = []
                 for category, phrases in self.words_data.get('corpus', {}).items():
-                    corpus.extend(phrases)
+                    for phrase in phrases:
+                        cleaned = clean_text(phrase)
+                        if cleaned:
+                            corpus.append(cleaned)
                 return corpus
             
             def add_phrase(self, category, phrase):
+                cleaned = clean_text(phrase)
+                if not cleaned:
+                    print("⚠️ 词句为空，跳过")
+                    return
                 if category not in self.words_data['corpus']:
                     self.words_data['corpus'][category] = []
-                self.words_data['corpus'][category].append(phrase)
-                self.corpus.append(phrase)
+                self.words_data['corpus'][category].append(cleaned)
+                self.corpus.append(cleaned)
                 self.words_data['last_updated'] = datetime.now().isoformat()
                 self._save_words()
-                print(f"✅ 添加词句: [{category}] {phrase[:30]}...")
+                print(f"✅ 添加词句: [{category}] {cleaned[:30]}...")
             
             def _save_words(self):
                 with open(self.words_file, 'w', encoding='utf-8') as f:
                     json.dump(self.words_data, f, ensure_ascii=False, indent=2)
             
             def _build_vocab(self):
-                """构建字符级词汇表 - 修复中文和特殊字符问题"""
+                """构建字符级词汇表"""
                 all_text = ''.join(self.corpus)
-                chars = sorted(set(all_text))
-                chars = [c for c in chars if c and ord(c) >= 32]
+                if not all_text:
+                    print("⚠️ 语料库为空，使用默认字符")
+                    all_text = "你好世界"
                 
+                chars = sorted(set(all_text))
                 self.char2idx = {char: idx for idx, char in enumerate(chars)}
                 self.idx2char = {idx: char for char, idx in self.char2idx.items()}
                 self.vocab_size = len(chars)
@@ -194,27 +209,32 @@ jobs:
                 print(f"📝 示例字符: {''.join(list(self.char2idx.keys())[:20])}")
                 return self
             
-            def _prepare_data(self, seq_length=20):
-                """准备训练数据 - 增加错误处理"""
+            def _prepare_data(self, seq_length=15):
+                """准备训练数据"""
                 text = ''.join(self.corpus)
+                if not text:
+                    text = "你好世界"
+                
+                # 确保所有字符都在词汇表中
                 valid_chars = set(self.char2idx.keys())
                 filtered_text = ''.join([c for c in text if c in valid_chars])
                 
                 if len(filtered_text) < seq_length + 1:
-                    print(f"⚠️ 文本太短 ({len(filtered_text)} 字符)，需要至少 {seq_length + 1} 个字符")
-                    filtered_text = (filtered_text * (seq_length + 1))[:seq_length + 1]
+                    # 扩展文本
+                    repeat_times = (seq_length + 1) // len(filtered_text) + 1
+                    filtered_text = (filtered_text * repeat_times)[:seq_length + 1]
                 
                 sequences = []
                 next_chars = []
                 
-                for i in range(0, len(filtered_text) - seq_length, 1):
+                for i in range(0, len(filtered_text) - seq_length):
                     seq = filtered_text[i:i+seq_length]
                     next_char = filtered_text[i+seq_length]
                     sequences.append([self.char2idx[char] for char in seq])
                     next_chars.append(self.char2idx[next_char])
                 
-                if len(sequences) == 0:
-                    print("⚠️ 没有生成训练样本，使用最小数据集")
+                # 如果还是没有数据，创建最小数据集
+                if not sequences:
                     seq = filtered_text[:seq_length]
                     next_char = filtered_text[seq_length] if len(filtered_text) > seq_length else seq[0]
                     sequences = [[self.char2idx[c] for c in seq]]
@@ -223,6 +243,7 @@ jobs:
                 X = np.array(sequences)
                 y = np.array(next_chars)
                 
+                # One-hot编码
                 X_one_hot = tf.one_hot(X, depth=self.vocab_size)
                 y_one_hot = tf.one_hot(y, depth=self.vocab_size)
                 
@@ -258,7 +279,7 @@ jobs:
                 return model
             
             def train(self, epochs=100, verbose=True):
-                """训练神经网络 - 增加错误处理"""
+                """训练神经网络"""
                 if verbose:
                     print("\n" + "="*70)
                     print("🚀 开始训练神经网络")
@@ -309,17 +330,23 @@ jobs:
                     
                 except Exception as e:
                     print(f"⚠️ 训练过程中出错: {e}")
+                    import traceback
+                    traceback.print_exc()
                     print("📝 使用回退方案（基于规则的生成）")
                     return None
             
-            def generate_text(self, seed_text=None, length=30, temperature=0.7):
-                """生成文本 - 增加错误处理"""
+            def generate_text(self, seed_text=None, length=20, temperature=0.7):
+                """生成文本"""
                 if self.model is None or self.vocab_size == 0:
-                    return random.choice(self.corpus)
+                    return random.choice(self.corpus) if self.corpus else "你好世界"
                 
                 try:
                     if seed_text is None:
-                        seed_text = random.choice(self.corpus)[:self.seq_length]
+                        seed_text = random.choice(self.corpus)[:self.seq_length] if self.corpus else "你好"
+                    
+                    seed_text = clean_text(seed_text)
+                    if not seed_text:
+                        seed_text = "你好"
                     
                     if len(seed_text) < self.seq_length:
                         padding_char = list(self.char2idx.keys())[0] if self.char2idx else " "
@@ -351,10 +378,11 @@ jobs:
                     
                 except Exception as e:
                     print(f"⚠️ 生成文本时出错: {e}")
-                    return random.choice(self.corpus)
+                    return random.choice(self.corpus) if self.corpus else "你好世界"
             
             def generate_response(self, user_input):
                 """生成回复"""
+                user_input = clean_text(user_input)
                 user_lower = user_input.lower()
                 
                 patterns = self.words_data.get('intent_patterns', {})
@@ -367,24 +395,24 @@ jobs:
                 
                 if matched_category and matched_category in self.words_data['corpus']:
                     phrases = self.words_data['corpus'][matched_category]
-                    response = random.choice(phrases)
+                    if phrases:
+                        response = random.choice(phrases)
+                    else:
+                        response = random.choice(self.corpus) if self.corpus else "你好"
                 else:
                     try:
                         response = self.generate_text(
-                            seed_text=user_input[:self.seq_length],
-                            length=20,
+                            seed_text=user_input[:self.seq_length] if user_input else "你好",
+                            length=15,
                             temperature=0.7
                         )
-                        for punct in ['。', '！', '？', '.', '!', '?']:
+                        # 清理生成文本
+                        for punct in ['。', '！', '？']:
                             if punct in response:
                                 response = response.split(punct)[0] + punct
                                 break
                     except:
-                        response = random.choice(self.corpus)
-                
-                emojis = [" 😊", " 😄", " 🌟", " ✨", " 🚀", " 💻", " 🎉", ""]
-                if random.random() > 0.3:
-                    response = response + random.choice(emojis)
+                        response = random.choice(self.corpus) if self.corpus else "你好"
                 
                 return response
             
@@ -397,25 +425,21 @@ jobs:
                     try:
                         greeting = self.generate_text(
                             seed_text=random.choice(seed_texts),
-                            length=20,
+                            length=15,
                             temperature=random.uniform(0.6, 0.9)
                         )
-                        for punct in ['。', '！', '？']:
-                            if punct in greeting:
-                                greeting = greeting.split(punct)[0] + punct
-                                break
                         if len(greeting) < 5:
-                            greeting = random.choice(self.corpus)
+                            greeting = random.choice(self.corpus) if self.corpus else "你好"
                         greetings.append(greeting)
                     except:
-                        greetings.append(random.choice(self.corpus))
+                        greetings.append(random.choice(self.corpus) if self.corpus else "你好")
                 
                 return greetings
         
         def main():
-            user_message = sys.argv[1] if len(sys.argv) > 1 else "你好，Gudao是什么？"
+            user_message = sys.argv[1] if len(sys.argv) > 1 else "你好Gudao是什么"
             add_phrase = sys.argv[2] if len(sys.argv) > 2 else ""
-            epochs = int(sys.argv[3]) if len(sys.argv) > 3 else 50
+            epochs = int(sys.argv[3]) if len(sys.argv) > 3 else 30
             
             print("\n🚀 启动神经网络聊天机器人")
             print("="*70)
@@ -493,11 +517,11 @@ jobs:
         if [ -n "${{ github.event.inputs.chat_message }}" ]; then
           CHAT_MSG="${{ github.event.inputs.chat_message }}"
         else
-          CHAT_MSG="你好，Gudao是什么？"
+          CHAT_MSG="你好Gudao是什么"
         fi
         
         ADD_PHRASE="${{ github.event.inputs.add_phrase }}"
-        EPOCHS="${{ github.event.inputs.epochs || 50 }}"
+        EPOCHS="${{ github.event.inputs.epochs || 30 }}"
         
         echo "💬 用户消息: $CHAT_MSG"
         echo "🎯 训练轮数: $EPOCHS"
@@ -552,7 +576,7 @@ jobs:
         echo "## 🧠 神经网络训练完成" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "### 💬 测试对话" >> $GITHUB_STEP_SUMMARY
-        echo "- 用户: ${{ github.event.inputs.chat_message || '你好，Gudao是什么？' }}" >> $GITHUB_STEP_SUMMARY
+        echo "- 用户: ${{ github.event.inputs.chat_message || '你好Gudao是什么' }}" >> $GITHUB_STEP_SUMMARY
         echo "- AI: ${{ steps.train.outputs.ai_response }}" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "### 📊 训练统计" >> $GITHUB_STEP_SUMMARY
