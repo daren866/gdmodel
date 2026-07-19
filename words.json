@@ -1,0 +1,35 @@
+{
+  "version": "2.0",
+  "created_at": "2026-07-19T10:30:25.123456",
+  "last_updated": "2026-07-19T10:35:30.789012",
+  "corpus": {
+    "greetings": [
+      "你好！😊 很高兴见到你！有什么我可以帮你的吗？",
+      "你好呀！又见面啦～ 😄",
+      "嗨！我是DeepSeek，由深度求索公司创造的AI助手。😊"
+    ],
+    "python_print": [
+      "我来为你生成Python打印代码：print('Hello, World!')",
+      "格式化打印：f'姓名: {name}'",
+      "不换行打印：print('Hello', end=' ')"
+    ],
+    "gudao_info": [
+      "Gudao是一个个人网站，网址为gudaoweb.pages.dev",
+      "Gudao由个人搭建，目前已有多个实用项目"
+    ],
+    "general": [
+      "欢迎来到我的网站！希望您在这里度过愉快的时光。",
+      "人工智能正在改变世界，让我们一起探索未来！"
+    ]
+  },
+  "intent_patterns": {
+    "打印|print|python打印": "python_print",
+    "gudao|网站|个人网站": "gudao_info",
+    "你好|嗨|hello|hi": "greetings"
+  },
+  "training_stats": {
+    "total_phrases": 0,
+    "categories": 0,
+    "last_training": null
+  }
+}
