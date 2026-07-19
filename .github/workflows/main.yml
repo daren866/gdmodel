@@ -4,28 +4,25 @@ on:
   push:
     branches: [ main, master ]
   schedule:
-    # 每天凌晨2点自动运行
     - cron: '0 2 * * *'
-  workflow_dispatch:  # 支持手动触发
+  workflow_dispatch:
 
 jobs:
   train-and-generate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write  # 明确赋予写入权限
     
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
     
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.11'  # 使用稳定的Python版本
-    
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        # 无需额外依赖，只使用Python标准库
-        echo "✅ 依赖安装完成"
+        python-version: '3.11'
     
     - name: Create greeting generator script
       run: |
@@ -47,21 +44,15 @@ jobs:
             "人工智能正在改变世界，让我们一起探索未来！",
             "天气真好，心情也格外愉快。",
             "今天是个美好的一天，祝您开心！",
-            "有什么问题尽管问我，我会尽力帮您解答。",
-            "学习新知识总是令人兴奋的，您说是吗？",
-            "生活中最美的风景，往往在不经意间发现。",
-            "科技让世界更美好，也让我们的距离更近。",
-            "每一天都是新的开始，充满无限可能。",
-            "感恩相遇，期待与您共创美好回忆。"
+            "有什么问题尽管问我，我会尽力帮您解答。"
         ]
         
         class GreetingGenerator:
             def __init__(self):
                 self.corpus = CORPUS
-                self.prefixes = ["哦，", "嗯，", "好的，", "是的，", "对了，", "其实，", "当然，", "没错，", "哈哈，", "嘿，", "哟，", "嗨，", "您好，"]
+                self.prefixes = ["哦，", "嗯，", "好的，", "是的，", "对了，", "其实，", "当然，", "没错，", "哈哈，", "嗨，", "您好，"]
                 self.suffixes = [" 祝您开心！", " 有什么我可以帮您的吗？", " 随时为您服务！", " 很高兴为您服务！", " 希望您喜欢！", " 期待与您交流！", " 祝您一天愉快！"]
                 self.emojis = ["😊", "😄", "🌟", "✨", "🎉", "💫", "🎈", "❤️", "🔥", "🌈", ""]
-                self.history = []
             
             def _simulate_epoch(self, epoch, total):
                 loss = 4.0 * (0.95 ** epoch) + random.uniform(-0.05, 0.05)
@@ -102,7 +93,6 @@ jobs:
                     
                     greeting = re.sub(r'[！？。]+', lambda m: m.group(0)[0], greeting)
                     greetings.append(greeting)
-                    self.history.append(greeting)
                 
                 return greetings
         
@@ -133,25 +123,18 @@ jobs:
                 f.write(f"📊 统计: 语料库 {len(CORPUS)} 条\n")
                 f.write("="*70 + "\n")
             
-            # 同时保存为JSON格式
             output_data = {
                 'timestamp': datetime.now().isoformat(),
                 'greetings': greetings,
-                'corpus_size': len(CORPUS),
-                'total_generated': len(greetings)
+                'corpus_size': len(CORPUS)
             }
             
             with open('greetings_output.json', 'w', encoding='utf-8') as f:
                 json.dump(output_data, f, ensure_ascii=False, indent=2)
             
-            print("\n💾 文件已保存:")
-            print("   - greetings_output.txt (文本格式)")
-            print("   - greetings_output.json (JSON格式)")
-            print("\n🎊 完成！")
-            
-            # 输出第一条问候语作为"你好"测试
+            print("\n💾 文件已保存")
             print("\n" + "="*70)
-            print("✅ 测试输出 '你好' 问候语:")
+            print("✅ 测试输出:")
             print(f"   {greetings[0]}")
             print("="*70)
         
@@ -161,34 +144,31 @@ jobs:
         echo "✅ 脚本创建完成"
     
     - name: Run greeting generator
-      id: generate
       run: |
         python greeting_generator.py
         echo "✅ 问候语生成完成"
-        # 提取第一条问候语作为输出
-        FIRST_GREETING=$(head -n 1 greetings_output.txt | grep -E "^[0-9]+\." | sed 's/^[0-9]\+\. //')
-        echo "first_greeting=$FIRST_GREETING" >> $GITHUB_OUTPUT
-        echo "📝 生成的问候语: $FIRST_GREETING"
     
     - name: Display generated greetings
       run: |
-        echo "📄 生成的问候语内容："
+        echo "📄 生成的问候语："
         echo "-------------------"
         cat greetings_output.txt
         echo "-------------------"
-        echo ""
-        echo "📊 JSON格式："
-        cat greetings_output.json
     
     - name: Commit and push changes
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
+        # 使用正确的URL格式
+        git remote set-url origin https://x-access-token:${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}
         git add greetings_output.txt greetings_output.json
-        git diff --staged --quiet || git commit -m "🤖 Auto-generate greetings [skip ci]"
-        git push
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        if ! git diff --staged --quiet; then
+          git commit -m "🤖 Auto-generate greetings [skip ci]"
+          git push
+          echo "✅ 文件已提交并推送"
+        else
+          echo "✅ 没有新的更改需要提交"
+        fi
     
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
@@ -212,6 +192,5 @@ jobs:
         done < greetings_output.txt
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "### 📊 统计信息：" >> $GITHUB_STEP_SUMMARY
-        echo "- 语料库大小: $(grep -c "语料库" greetings_output.txt || echo "15") 条" >> $GITHUB_STEP_SUMMARY
+        echo "- 语料库大小: 10 条" >> $GITHUB_STEP_SUMMARY
         echo "- 生成时间: $(date '+%Y-%m-%d %H:%M:%S')" >> $GITHUB_STEP_SUMMARY
-        echo "- 查看详情: [greetings_output.txt](https://github.com/${{ github.repository }}/blob/main/greetings_output.txt)" >> $GITHUB_STEP_SUMMARY
