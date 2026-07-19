@@ -164,7 +164,8 @@ jobs:
                 self.vocab_size = 0
                 self.model = None
                 self.seq_length = 15
-                self.model_path = 'model.bin'
+                # 使用 .keras 扩展名，Keras 3 推荐格式
+                self.model_path = 'model.keras'
             
             def _load_or_create_words(self):
                 if os.path.exists(self.words_file):
@@ -187,6 +188,14 @@ jobs:
                         cleaned = clean_text(phrase)
                         if cleaned:
                             corpus.append(cleaned)
+                # 如果语料库为空，使用默认语料
+                if not corpus:
+                    print("⚠️ 语料库为空，使用默认语料")
+                    for category, phrases in DEFAULT_WORDS['corpus'].items():
+                        for phrase in phrases:
+                            cleaned = clean_text(phrase)
+                            if cleaned:
+                                corpus.append(cleaned)
                 return corpus
             
             def add_phrase(self, category, phrase):
@@ -330,9 +339,13 @@ jobs:
                     final_acc = history.history['accuracy'][-1]
                     final_loss = history.history['loss'][-1]
                     
-                    # 保存模型为 .bin 格式
-                    self.model.save(self.model_path, save_format='tf')
+                    # 修复：使用 .keras 扩展名，移除 save_format 参数
+                    self.model.save(self.model_path)
                     print(f"💾 模型已保存到: {self.model_path}")
+                    
+                    # 同时保存为 .h5 格式作为兼容
+                    self.model.save('model.h5')
+                    print(f"💾 模型已保存到: model.h5")
                     
                     self.words_data['training_stats']['last_training'] = datetime.now().isoformat()
                     self.words_data['training_stats']['model_accuracy'] = float(final_acc)
@@ -572,11 +585,15 @@ jobs:
         echo ""
         echo "📦 模型文件："
         echo "-------------------"
-        if [ -f "model.bin" ]; then
-          ls -lh model.bin
-          echo "✅ model.bin 存在"
+        if [ -f "model.keras" ]; then
+          ls -lh model.keras
+          echo "✅ model.keras 存在"
         else
-          echo "⚠️ model.bin 不存在"
+          echo "⚠️ model.keras 不存在"
+        fi
+        if [ -f "model.h5" ]; then
+          ls -lh model.h5
+          echo "✅ model.h5 存在"
         fi
     
     - name: Create Release
@@ -591,9 +608,13 @@ jobs:
         echo "TAG=$TAG" >> $GITHUB_OUTPUT
         
         RELEASE_FILES="words.json greetings_output.txt"
-        if [ -f "model.bin" ]; then
-          RELEASE_FILES="$RELEASE_FILES model.bin"
-          echo "✅ 包含模型文件 model.bin"
+        if [ -f "model.keras" ]; then
+          RELEASE_FILES="$RELEASE_FILES model.keras"
+          echo "✅ 包含模型文件 model.keras"
+        fi
+        if [ -f "model.h5" ]; then
+          RELEASE_FILES="$RELEASE_FILES model.h5"
+          echo "✅ 包含模型文件 model.h5"
         fi
         
         gh release create "$TAG" \
@@ -611,7 +632,8 @@ jobs:
           $(date '+%Y-%m-%d %H:%M:%S')
           
           ### 📁 包含文件
-          $(if [ -f "model.bin" ]; then echo "- \`model.bin\` - 训练好的神经网络模型"; else echo "- ⚠️ 模型文件不可用"; fi)
+          $(if [ -f "model.keras" ]; then echo "- \`model.keras\` - 训练好的神经网络模型（Keras 3 格式）"; fi)
+          $(if [ -f "model.h5" ]; then echo "- \`model.h5\` - 训练好的神经网络模型（兼容格式）"; fi)
           - \`words.json\` - 语料库
           - \`greetings_output.txt\` - 训练输出结果"
           
@@ -626,8 +648,11 @@ jobs:
         git remote set-url origin https://x-access-token:${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}
         
         git add words.json greetings_output.txt 2>/dev/null || true
-        if [ -f "model.bin" ]; then
-          git add model.bin
+        if [ -f "model.keras" ]; then
+          git add model.keras
+        fi
+        if [ -f "model.h5" ]; then
+          git add model.h5
         fi
         
         if ! git diff --staged --quiet; then
@@ -652,7 +677,8 @@ jobs:
         path: |
           words.json
           greetings_output.txt
-          model.bin
+          model.keras
+          model.h5
         retention-days: 30
         if-no-files-found: warn
     
@@ -685,6 +711,9 @@ jobs:
         echo "### 📁 文件链接" >> $GITHUB_STEP_SUMMARY
         echo "- [words.json](https://github.com/${{ github.repository }}/blob/main/words.json)" >> $GITHUB_STEP_SUMMARY
         echo "- [greetings_output.txt](https://github.com/${{ github.repository }}/blob/main/greetings_output.txt)" >> $GITHUB_STEP_SUMMARY
-        if [ -f "model.bin" ]; then
-          echo "- [model.bin](https://github.com/${{ github.repository }}/releases/tag/${{ steps.create_release.outputs.TAG }})" >> $GITHUB_STEP_SUMMARY
+        if [ -f "model.keras" ]; then
+          echo "- [model.keras](https://github.com/${{ github.repository }}/releases/tag/${{ steps.create_release.outputs.TAG }})" >> $GITHUB_STEP_SUMMARY
+        fi
+        if [ -f "model.h5" ]; then
+          echo "- [model.h5](https://github.com/${{ github.repository }}/releases/tag/${{ steps.create_release.outputs.TAG }})" >> $GITHUB_STEP_SUMMARY
         fi
