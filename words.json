@@ -68,8 +68,8 @@
   "training_stats": {
     "total_phrases": 39,
     "categories": 7,
-    "last_training": "2026-10-20T06:46:57.896587",
-    "model_accuracy": 0.0569620244204998,
-    "model_loss": 5.070383548736572
+    "last_training": "2026-10-21T06:41:48.582129",
+    "model_accuracy": 0.13396623730659485,
+    "model_loss": 4.190925598144531
   }
 }
